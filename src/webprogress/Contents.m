@@ -1,4 +1,5 @@
 % HTTP Progress Bar
-% Version 1.0.0 ({{ date }})
+% Version 1.2.0 (R2019b+) 07-May-2026
 %
-% Copyright {{ year }} Eivind Hennestad
+% Copyright (c) 2026, Eivind Hennestad
+% ------------------------------------
