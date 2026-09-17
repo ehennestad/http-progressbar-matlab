@@ -23,8 +23,20 @@ Install the toolbox from MATLAB's Add-On Explorer or from [File Exchange](https:
 ## Getting started
 
 ```matlab
-< add some code examples here >
+% Download a file. Progress is shown in a waitbar.
+url = "https://proof.ovh.net/files/100Mb.dat";
+downloadFile(fullfile(tempdir, "100Mb.dat"), url)
+
+% Show progress in the Command Window instead, with the file name
+downloadFile(fullfile(tempdir, "100Mb.dat"), url, ...
+    "DisplayMode", "Command Window", "ShowFilename", true)
+
+% Upload a file with a PUT request to a URL that accepts uploads,
+% for example a presigned upload URL from a storage service
+wasSuccess = uploadFile("results.mat", uploadUrl);
 ```
+
+Run `progressDialogDemo` to see the waitbar and a progress dialog in an app figure.
 
 ## Contributing
 Please see the [Contributing guidelines](.github/CONTRIBUTING.md) and the [Developer notes](.github/DeveloperNotes.md)
