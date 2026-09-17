@@ -4,29 +4,29 @@ function gettingStarted()
     %   GETTINGSTARTED() opens the getting started guide for the toolbox.
     %
     %   Example:
-    %       {{ cookiecutter.namespace_name }}.gettingStarted()
+    %       webprogress.gettingStarted()
     %
-    %   See also {{ cookiecutter.namespace_name }}.toolboxdir, {{ cookiecutter.namespace_name }}.toolboxversion
+    %   See also webprogress.toolboxdir, webprogress.toolboxversion
 
     % Display welcome message
-    fprintf('Welcome to {{ cookiecutter.toolbox_name }}!\n\n');
-    fprintf('{{ cookiecutter.toolbox_summary }}\n\n');
+    fprintf('Welcome to HTTP Progress Bar!\n\n');
+    fprintf('Download and upload files over HTTP with a live progress display\n\n');
     
     % Display version information
-    fprintf('Version: %s\n', {{ cookiecutter.namespace_name }}.toolboxversion());
+    fprintf('Version: %s\n', webprogress.toolboxversion());
     
     % Display directory information
-    fprintf('Toolbox directory: %s\n\n', {{ cookiecutter.namespace_name }}.toolboxdir());
+    fprintf('Toolbox directory: %s\n\n', webprogress.toolboxdir());
     
     % Display available functions
     fprintf('Available functions:\n');
-    fprintf('  - {{ cookiecutter.namespace_name }}.toolboxdir\n');
-    fprintf('  - {{ cookiecutter.namespace_name }}.toolboxversion\n');
-    fprintf('  - {{ cookiecutter.namespace_name }}.gettingStarted\n\n');
+    fprintf('  - webprogress.toolboxdir\n');
+    fprintf('  - webprogress.toolboxversion\n');
+    fprintf('  - webprogress.gettingStarted\n\n');
     
     % Display examples
     fprintf('Examples:\n');
-    examplesDir = fullfile({{ cookiecutter.namespace_name }}.toolboxdir(), 'code', 'examples');
+    examplesDir = fullfile(webprogress.toolboxdir(), 'code', 'examples');
     if exist(examplesDir, 'dir')
         exampleFiles = dir(fullfile(examplesDir, '*.m'));
         if ~isempty(exampleFiles)
@@ -42,7 +42,7 @@ function gettingStarted()
     
     % Display documentation
     fprintf('\nDocumentation:\n');
-    docsDir = fullfile({{ cookiecutter.namespace_name }}.toolboxdir(), 'docs');
+    docsDir = fullfile(webprogress.toolboxdir(), 'docs');
     if exist(docsDir, 'dir')
         fprintf('  Documentation is available in the docs directory:\n');
         fprintf('  %s\n', docsDir);
