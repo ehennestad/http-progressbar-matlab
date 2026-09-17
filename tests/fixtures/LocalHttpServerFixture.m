@@ -1,9 +1,10 @@
 classdef LocalHttpServerFixture < matlab.unittest.fixtures.Fixture
     %LocalHttpServerFixture - Fixture that runs a local HTTP status server
     %   The fixture starts http_status_server.py with python3 on a free
-    %   port of 127.0.0.1. A PUT or POST request to BaseUrl + "/CODE"
-    %   receives HTTP status CODE with an empty body. The fixture needs
-    %   python3 and a Unix shell.
+    %   port of 127.0.0.1. A request to BaseUrl + "/CODE" receives HTTP
+    %   status CODE, and a GET request to BaseUrl + "/files/NAME" receives
+    %   a text file. The server script describes the query options. The
+    %   fixture needs python3 and a Unix shell.
 
     properties (SetAccess = private)
         BaseUrl string = "" % Server address, such as "http://127.0.0.1:50123"
