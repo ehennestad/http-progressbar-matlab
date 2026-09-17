@@ -62,12 +62,26 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
     methods
         function obj = FileTransferProgressMonitor(varargin)
             
-            % Parse optional inputs and assign as property values
+            % Parse optional inputs and assign as property values. Only
+            % the documented options are accepted: a misspelled name would
+            % otherwise be ignored without notice, and isprop would also
+            % accept internal properties such as StartTime.
+            validOptionNames = ["DisplayMode", "UpdateInterval", "Filename", ...
+                "IndentSize", "Figure", "FileSizeBytes"];
+
             [names, values] = obj.parseVarargin(varargin);
+            if numel(names) ~= numel(values)
+                error("webprogress:FileTransferProgressMonitor:InvalidOptions", ...
+                    "Options must be given as name-value pairs.")
+            end
+
             for i = 1:numel(names)
-                if isprop(obj, names{i})
-                    obj.(names{i}) = values{i};
+                if ~any(strcmp(names{i}, validOptionNames))
+                    error("webprogress:FileTransferProgressMonitor:UnknownOption", ...
+                        "Unknown option ""%s"". Valid options are %s.", ...
+                        string(names{i}), strjoin(validOptionNames, ", "))
                 end
+                obj.(names{i}) = values{i};
             end
             
             obj.Interval = 1;
@@ -427,7 +441,7 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
             
             if isempty(vararginCellArray)
                 return
-            elseif numel(vararginCellArray) == 1 && isstruct(vararginCellArray{1})
+            elseif isscalar(vararginCellArray) && isstruct(vararginCellArray{1})
                 names = fieldnames(vararginCellArray{1});
                 values = struct2cell(vararginCellArray{1});
             else
