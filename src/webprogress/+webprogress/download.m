@@ -1,20 +1,47 @@
 function strLocalFilename = download(strLocalFilename, strURLFilename, options)
-%download Download and save a file from web while displaying progress.
+%download - Download a file from the web and display progress
+%   webprogress.download(FILENAME,URL) downloads the file at URL and
+%   saves it to FILENAME. If FILENAME is a folder, the file is saved in
+%   that folder. Progress is shown in a waitbar. Percent-encoded
+%   characters in URL, such as %20, are sent unchanged.
 %
-%   webprogress.download(strLocalFilename, strURLFilename) downloads the file
-%   specified by the url strURLFilename to the local path specified by
-%   strLocalFile
+%   FILEPATH = webprogress.download(FILENAME,URL) also returns the full
+%   path of the saved file.
 %
-%   strLocalFilename = webprogress.download(localFilename, strURLFilename)
-%   downloads the file and returns the absolute path of the downloaded file
+%   [...] = webprogress.download(...,DisplayMode=MODE) specifies where
+%   progress is shown. MODE must be:
+%       "Dialog Box"     - (default) Shows progress in a dialog box.
+%       "Command Window" - Prints progress in the Command Window.
 %
-%   Options:
-%       DisplayMode     : Where to display progress. Options: 'Dialog Box' (default) or 'Command Window'
-%       UpdateInterval  : Interval (in seconds) for updating progress. Default = 1 second.
-%       ShowFilename    : Whether to show name of downloaded file. Default = false.
-%       IndentSize      : Size of indentation if displaying progress in command window.
-%       Figure          : Parent figure for uiprogressdlg. Default = [].
-%       FileSizeBytes   : Known file size when HTTP progress size is unavailable. Default = NaN.
+%   [...] = webprogress.download(...,UpdateInterval=SECONDS) specifies
+%   the minimum number of seconds between progress updates. The default
+%   is 1.
+%
+%   [...] = webprogress.download(...,ShowFilename=SHOW) shows the file
+%   name from URL in the progress title when SHOW is true. The default
+%   is false.
+%
+%   [...] = webprogress.download(...,IndentSize=N) indents progress
+%   printed in the Command Window by N spaces. The default is 0.
+%
+%   [...] = webprogress.download(...,Figure=FIG) shows progress in a
+%   uiprogressdlg in the figure FIG. Before R2025a, FIG must be a
+%   uifigure. For other figures, progress is shown in a waitbar.
+%
+%   [...] = webprogress.download(...,FileSizeBytes=N) specifies the file
+%   size in bytes to use for progress when the server does not report it.
+%
+%   webprogress.download raises an error if the server responds with a
+%   status that is not a successful 2xx status, and deletes the file
+%   written for that response.
+%
+%   Example: Download a file and print progress in the Command Window
+%       url = "https://allen-brain-observatory.s3.us-west-2" + ...
+%           ".amazonaws.com/visual-coding-2p/stimulus_mappings.json";
+%       filePath = webprogress.download(tempdir, url, ...
+%           "DisplayMode", "Command Window");
+%
+%   See also webprogress.upload, websave
 
 %   Written by Eivind Hennestad
 

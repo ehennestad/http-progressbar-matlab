@@ -1,4 +1,8 @@
 function mustBeFigureOrEmpty(fig)
+%mustBeFigureOrEmpty - Validate that a value is a figure or empty
+%   mustBeFigureOrEmpty(FIG) raises an error unless FIG is empty or a
+%   scalar figure handle.
+
     if isempty(fig)
         return
     end
