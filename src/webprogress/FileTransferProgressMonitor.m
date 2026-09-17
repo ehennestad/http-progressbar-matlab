@@ -388,10 +388,6 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
             else
                 fileSizeBytes = obj.FileSizeBytes;
             end
-
-            if isnan(fileSizeBytes)
-                % Todo: Warn once
-            end
         end
     end
 
