@@ -2,10 +2,11 @@
 % [text] This script demonstrates the two dialog-based progress displays:
 % [text] - A standard MATLAB waitbar.
 % [text] - A uiprogressdlg parented to a uifigure. \
-demoUrl = 'https://allen-brain-observatory.s3.us-west-2.amazonaws.com/visual-coding-2p/cell_specimens.json';
+% [text] Each section downloads a 100 MB test file that OVHcloud publishes for download speed tests. On a slow connection, use the 10 MB file, 10Mb.dat, instead.
+demoUrl = 'https://proof.ovh.net/files/100Mb.dat';
 
-standardWaitbarFile = fullfile(tempdir, 'filedownload_standard_waitbar_demo.json');
-uiProgressDialogFile = fullfile(tempdir, 'filedownload_uiprogressdlg_demo.json');
+standardWaitbarFile = fullfile(tempdir, 'filedownload_standard_waitbar_demo.dat');
+uiProgressDialogFile = fullfile(tempdir, 'filedownload_uiprogressdlg_demo.dat');
 %%
 % [text] ## Standard Waitbar
 % [text] Without a Figure argument, downloadFile uses a standard waitbar dialog.
