@@ -2,12 +2,12 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
 %FileTransferProgressMonitor Updates a progress monitor for file transfers.
 %
 %   Create a function handle to provide to matlab.net.http.HTTPOptions:
-%       progressMonitorFcn = @FileTransferProgressMonitor;
+%       progressMonitorFcn = @webprogress.FileTransferProgressMonitor;
 %
 %   Create a function handle to provide to matlab.net.http.HTTPOptions
 %   while specifying custom options for the monitor:
 %       monitorOptions = {'DisplayMode', 'Command Window'};
-%       progressMonitorFcn = @(varargin) FileTransferProgressMonitor(monitorOptions{:})
+%       progressMonitorFcn = @(varargin) webprogress.FileTransferProgressMonitor(monitorOptions{:})
 %
 %   Supported options:
 %       DisplayMode     : Where to display progress. Options: 'Dialog Box' (default) or 'Command Window'
@@ -122,12 +122,12 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
 
         function tf = get.UseWaitbarDialog(obj)
             tf = strcmpi(obj.DisplayMode, 'Dialog Box') ...
-                && ~FileTransferProgressMonitor.isWebBasedUIFigure(obj.Figure);
+                && ~webprogress.FileTransferProgressMonitor.isWebBasedUIFigure(obj.Figure);
         end
 
         function tf = get.UseUIProgressDialog(obj)
             tf = strcmpi(obj.DisplayMode, 'Dialog Box') ...
-                && FileTransferProgressMonitor.isWebBasedUIFigure(obj.Figure);
+                && webprogress.FileTransferProgressMonitor.isWebBasedUIFigure(obj.Figure);
         end
 
         function tf = get.UseCommandWindow(obj)

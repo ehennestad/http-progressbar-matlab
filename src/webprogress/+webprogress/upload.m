@@ -1,20 +1,25 @@
-function strLocalFilename = downloadFile(strLocalFilename, strURLFilename, options)
-%downloadFile Download and save a file from web while displaying progress.
+function [wasSuccess, response] = upload(strLocalFilename, strURLFilename, options)
+%upload Upload a file to web while displaying progress.
 %
-%   downloadFile(strLocalFilename, strURLFilename) downloads the file
-%   specified by the url strURLFilename to the local path specified by
-%   strLocalFile
+%   webprogress.upload(strLocalFilename, strURLFilename) uploads the file
+%   specified by the local path `strLocalFilename` to the web location
+%   specified by `strURLFilename`.
 %
-%   strLocalFilename = downloadFile(localFilename, strURLFilename)
-%   downloads the file and returns the absolute path of the downloaded file
+%   wasSuccess = webprogress.upload(localFilename, strURLFilename) uploads the file
+%   and returns a boolean value indicating if the upload was successful or
+%   not.
+%
+%   [wasSuccess, response] = webprogress.upload(localFilename, strURLFilename)
+%   uploads the file and returns the wasSuccess boolean and a response
+%   object.
 %
 %   Options:
 %       DisplayMode     : Where to display progress. Options: 'Dialog Box' (default) or 'Command Window'
 %       UpdateInterval  : Interval (in seconds) for updating progress. Default = 1 second.
-%       ShowFilename    : Whether to show name of downloaded file. Default = false.
+%       ShowFilename    : Whether to show name of uploaded file. Default = false.
 %       IndentSize      : Size of indentation if displaying progress in command window.
 %       Figure          : Parent figure for uiprogressdlg. Default = [].
-%       FileSizeBytes   : Known file size when HTTP progress size is unavailable. Default = NaN.
+%       RequestMessage  : Custom request message. Its body is replaced with the local file provider.
 
 %   Written by Eivind Hennestad
 
@@ -26,7 +31,7 @@ function strLocalFilename = downloadFile(strLocalFilename, strURLFilename, optio
         options.ShowFilename   (1,1) logical                     = false
         options.IndentSize     (1,1) uint8                       = 0
         options.Figure         {mustBeFigureOrEmpty}             = []
-        options.FileSizeBytes  (1,1) double                      = nan
+        options.RequestMessage matlab.net.http.RequestMessage    = matlab.net.http.RequestMessage.empty
     end
 
     if options.ShowFilename
@@ -41,19 +46,23 @@ function strLocalFilename = downloadFile(strLocalFilename, strURLFilename, optio
         'UpdateInterval', options.UpdateInterval, ...
         'Filename', filename, ...
         'IndentSize', options.IndentSize, ...
-        'Figure', options.Figure, ...
-        'FileSizeBytes', options.FileSizeBytes };
+        'Figure', options.Figure };
     
     webOpts = matlab.net.http.HTTPOptions(...
-        'ProgressMonitorFcn', @(opts) FileTransferProgressMonitor(monitorOpts{:}),...
+        'ProgressMonitorFcn', @(opts) webprogress.FileTransferProgressMonitor(monitorOpts{:}),...
         'UseProgressMonitor', true, ...
         'ConnectTimeout', 20);
 
-    % Create a file consumer for saving the file
-    consumer = matlab.net.http.io.FileConsumer(strLocalFilename);
-    
-    method = matlab.net.http.RequestMethod.GET;
-    req = matlab.net.http.RequestMessage(method, [], []);
+    % Create a file provider for uploading the file
+    provider = matlab.net.http.io.FileProvider(strLocalFilename);
+
+    if isempty(options.RequestMessage)
+        method = matlab.net.http.RequestMethod.PUT;
+        req = matlab.net.http.RequestMessage(method, [], provider);
+    else
+        req = options.RequestMessage;
+        req.Body = provider;
+    end
     
     % The URL is already percent-encoded, as any URL handed out by a web
     % service is. Without 'literal' the URI constructor would encode it a
@@ -61,11 +70,22 @@ function strLocalFilename = downloadFile(strLocalFilename, strURLFilename, optio
     % reject every name with a space or other encoded character.
     strURLFilename = matlab.net.URI(strURLFilename, 'literal');
     
-    [resp, ~, ~] = req.send(strURLFilename, webOpts, consumer);
-
-    strLocalFilename = resp.Body.Data;
-
+    [response, ~, ~] = req.send(strURLFilename, webOpts);
+    
+    if response.StatusCode == matlab.net.http.StatusCode.OK
+        wasSuccess = true;
+    else
+        wasSuccess = false;
+    end
+    
     if nargout < 1
-        clear strLocalFilename
+        if ~wasSuccess
+            error(string(response.StatusLine))
+        end
+        clear wasSuccess
+    end
+
+    if nargout < 2
+        clear response
     end
 end
