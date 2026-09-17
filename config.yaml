@@ -18,19 +18,17 @@ repository:
 
 # MATLAB Toolbox Settings
 matlab_toolbox:
-  namespace_name: mytoolbox                         # A unique namespace for your toolbox
-  toolbox_name: My Toolbox                          # Name of the MATLAB toolbox                  
-  author_name: John Doe                     
-  author_email: johndoe@example.com         
-  author_company: John Doe Inc.                     # Author's company or organization
-  toolbox_summary: A short summary of what the toolbox does
+  namespace_name: webprogress                       # A unique namespace for your toolbox
+  toolbox_name: HTTP Progress Bar                   # Name of the MATLAB toolbox
+  author_name: Eivind Hennestad
+  author_email: ehennestad@gmail.com
+  author_company: ''                                # Author's company or organization
+  toolbox_summary: Download and upload files over HTTP with a live progress display
   toolbox_description: |
-    A detailed description of your MATLAB toolbox.
-    This can span multiple lines to provide users with enough information
-    on what your toolbox offers and how it can be used.
+    Download files from the web and upload files to the web while showing live progress, using MATLAB's HTTP interface.
+    Progress is shown in a waitbar, in a progress dialog attached to an app figure, or in the Command Window. It includes the transferred size, the percentage and an estimate of the remaining time.
   dependencies:                                     # Required MATLAB products
     - MATLAB
-    - Statistics and Machine Learning Toolbox
 
 # Publishing options
 codecov:
