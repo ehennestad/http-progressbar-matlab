@@ -1,25 +1,43 @@
 function [wasSuccess, response] = upload(strLocalFilename, strURLFilename, options)
-%upload Upload a file to web while displaying progress.
+%upload - Upload a file to the web and display progress
+%   webprogress.upload(FILENAME,URL) uploads the file FILENAME to URL
+%   with a PUT request and shows progress in a waitbar. Percent-encoded
+%   characters in URL, such as %20, are sent unchanged.
+%   webprogress.upload raises an error if the server responds with a
+%   status that is not a successful 2xx status.
 %
-%   webprogress.upload(strLocalFilename, strURLFilename) uploads the file
-%   specified by the local path `strLocalFilename` to the web location
-%   specified by `strURLFilename`.
+%   TF = webprogress.upload(FILENAME,URL) returns true if the server
+%   responds with a successful 2xx status and false otherwise. With an
+%   output, webprogress.upload does not raise an error for an
+%   unsuccessful status.
 %
-%   wasSuccess = webprogress.upload(localFilename, strURLFilename) uploads the file
-%   and returns a boolean value indicating if the upload was successful or
-%   not.
+%   [TF,RESPONSE] = webprogress.upload(FILENAME,URL) also returns the
+%   response message from the server.
 %
-%   [wasSuccess, response] = webprogress.upload(localFilename, strURLFilename)
-%   uploads the file and returns the wasSuccess boolean and a response
-%   object.
+%   [...] = webprogress.upload(...,DisplayMode=MODE) specifies where
+%   progress is shown. MODE must be:
+%       "Dialog Box"     - (default) Shows progress in a dialog box.
+%       "Command Window" - Prints progress in the Command Window.
 %
-%   Options:
-%       DisplayMode     : Where to display progress. Options: 'Dialog Box' (default) or 'Command Window'
-%       UpdateInterval  : Interval (in seconds) for updating progress. Default = 1 second.
-%       ShowFilename    : Whether to show name of uploaded file. Default = false.
-%       IndentSize      : Size of indentation if displaying progress in command window.
-%       Figure          : Parent figure for uiprogressdlg. Default = [].
-%       RequestMessage  : Custom request message. Its body is replaced with the local file provider.
+%   [...] = webprogress.upload(...,UpdateInterval=SECONDS) specifies the
+%   minimum number of seconds between progress updates. The default is 1.
+%
+%   [...] = webprogress.upload(...,ShowFilename=SHOW) shows the name of
+%   FILENAME in the progress title when SHOW is true. The default is
+%   false.
+%
+%   [...] = webprogress.upload(...,IndentSize=N) indents progress printed
+%   in the Command Window by N spaces. The default is 0.
+%
+%   [...] = webprogress.upload(...,Figure=FIG) shows progress in a
+%   uiprogressdlg in the figure FIG. Before R2025a, FIG must be a
+%   uifigure. For other figures, progress is shown in a waitbar.
+%
+%   [...] = webprogress.upload(...,RequestMessage=REQUEST) sends REQUEST
+%   instead of a PUT request, for example to use another method or to add
+%   headers. The body of REQUEST is replaced by the file.
+%
+%   See also webprogress.download, webwrite
 
 %   Written by Eivind Hennestad
 

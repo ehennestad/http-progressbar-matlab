@@ -1,20 +1,54 @@
 function strLocalFilename = download(strLocalFilename, strURLFilename, options)
-%download Download and save a file from web while displaying progress.
+%download - Download a file from the web and display progress
+%   webprogress.download(FILENAME,URL) downloads the file at URL and
+%   saves it to FILENAME exactly, without adding an extension, and
+%   replaces an existing file. Progress is shown in a waitbar.
+%   Percent-encoded characters in URL, such as %20, are sent unchanged.
 %
-%   webprogress.download(strLocalFilename, strURLFilename) downloads the file
-%   specified by the url strURLFilename to the local path specified by
-%   strLocalFile
+%   If FILENAME is a folder, the file is saved in that folder under the
+%   name the server gives in its Content-Disposition header, or else
+%   under the last segment of the URL path.
 %
-%   strLocalFilename = webprogress.download(localFilename, strURLFilename)
-%   downloads the file and returns the absolute path of the downloaded file
+%   The file is received in a temporary file in the target folder, which
+%   replaces the target only after a successful download. If the
+%   download fails or is interrupted, an existing file is left unchanged.
 %
-%   Options:
-%       DisplayMode     : Where to display progress. Options: 'Dialog Box' (default) or 'Command Window'
-%       UpdateInterval  : Interval (in seconds) for updating progress. Default = 1 second.
-%       ShowFilename    : Whether to show name of downloaded file. Default = false.
-%       IndentSize      : Size of indentation if displaying progress in command window.
-%       Figure          : Parent figure for uiprogressdlg. Default = [].
-%       FileSizeBytes   : Known file size when HTTP progress size is unavailable. Default = NaN.
+%   FILEPATH = webprogress.download(FILENAME,URL) also returns the full
+%   path of the saved file.
+%
+%   [...] = webprogress.download(...,DisplayMode=MODE) specifies where
+%   progress is shown. MODE must be:
+%       "Dialog Box"     - (default) Shows progress in a dialog box.
+%       "Command Window" - Prints progress in the Command Window.
+%
+%   [...] = webprogress.download(...,UpdateInterval=SECONDS) specifies
+%   the minimum number of seconds between progress updates. The default
+%   is 1.
+%
+%   [...] = webprogress.download(...,ShowFilename=SHOW) shows the file
+%   name from URL in the progress title when SHOW is true. The default
+%   is false.
+%
+%   [...] = webprogress.download(...,IndentSize=N) indents progress
+%   printed in the Command Window by N spaces. The default is 0.
+%
+%   [...] = webprogress.download(...,Figure=FIG) shows progress in a
+%   uiprogressdlg in the figure FIG. Before R2025a, FIG must be a
+%   uifigure. For other figures, progress is shown in a waitbar.
+%
+%   [...] = webprogress.download(...,FileSizeBytes=N) specifies the file
+%   size in bytes to use for progress when the server does not report it.
+%
+%   webprogress.download raises an error if the server responds with a
+%   status that is not a successful 2xx status.
+%
+%   Example: Download a file and print progress in the Command Window
+%       url = "https://allen-brain-observatory.s3.us-west-2" + ...
+%           ".amazonaws.com/visual-coding-2p/stimulus_mappings.json";
+%       filePath = webprogress.download(tempdir, url, ...
+%           "DisplayMode", "Command Window");
+%
+%   See also webprogress.upload, websave
 
 %   Written by Eivind Hennestad
 
@@ -56,31 +90,112 @@ function strLocalFilename = download(strLocalFilename, strURLFilename, options)
         'UseProgressMonitor', true, ...
         'ConnectTimeout', 20);
 
-    % Create a file consumer for saving the file
-    consumer = matlab.net.http.io.FileConsumer(strLocalFilename);
+    isFolderTarget = isfolder(strLocalFilename);
+    if isFolderTarget
+        targetFolder = strLocalFilename;
+    else
+        targetFolder = fileparts(strLocalFilename);
+        if isempty(targetFolder)
+            targetFolder = pwd;
+        end
+        if ~isfolder(targetFolder)
+            error("webprogress:download:FolderNotFound", ...
+                "Cannot save the file because the folder ""%s"" does not exist. " + ...
+                "Create the folder or choose another file path.", targetFolder)
+        end
+    end
+
+    % Receive the file in a temporary file that replaces the target only
+    % after a successful download, so an existing file survives a failed or
+    % interrupted download. The file consumer writes the response body
+    % whatever the status, and it overwrites its target as soon as data
+    % arrives. The temporary file sits in the target folder so that the
+    % final move is a rename, not a copy. Its .part extension stops the file
+    % consumer from adding an extension of its own, such as ".txt" for a
+    % text/plain response. onCleanup deletes the temporary file when the
+    % function exits early, including by an error or Ctrl+C.
+    [~, folderInfo] = fileattrib(targetFolder);
+    targetFolder = folderInfo.Name; % Full path, also for a relative input
+    temporaryFile = [tempname(targetFolder), '.part'];
+    temporaryFileCleanup = onCleanup(@() deleteIfFile(temporaryFile));
+    consumer = matlab.net.http.io.FileConsumer(temporaryFile);
     
     method = matlab.net.http.RequestMethod.GET;
     req = matlab.net.http.RequestMessage(method, [], []);
     
     [resp, ~, ~] = req.send(uri, webOpts, consumer);
 
-    % The file consumer writes the response body whatever the status, so a
-    % failed request leaves the server's error page at the target path.
-    % Body.Data holds the path that was written, which differs from the
-    % input when the input is a folder.
     if resp.StatusCode.getClass() ~= matlab.net.http.StatusClass.Successful
-        if ~isempty(resp.Body) && ~isempty(resp.Body.Data) && isfile(resp.Body.Data)
-            delete(resp.Body.Data)
-        end
         error("webprogress:download:RequestFailed", ...
             "Download failed because the server responded with ""%s"". " + ...
             "Check that the URL is correct and has not expired.", ...
             string(resp.StatusLine))
     end
 
-    strLocalFilename = resp.Body.Data;
+    if isFolderTarget
+        targetName = getRemoteFilename(resp, uri);
+        if strlength(targetName) == 0
+            error("webprogress:download:NoFilename", ...
+                "Cannot name the downloaded file because neither the server " + ...
+                "response nor the URL gives a file name. Give the path of the " + ...
+                "file to write instead of a folder.")
+        end
+    else
+        [~, name, ext] = fileparts(strLocalFilename);
+        targetName = string(name) + string(ext);
+    end
+
+    % The file consumer creates its file when the first data arrives, so a
+    % response with an empty body leaves no file to move.
+    if ~isfile(temporaryFile)
+        fclose(fopen(temporaryFile, 'w'));
+    end
+
+    targetFile = string(fullfile(targetFolder, targetName));
+    [isMoved, moveMessage] = movefile(temporaryFile, targetFile, 'f');
+    if ~isMoved
+        error("webprogress:download:CannotSaveFile", ...
+            "Cannot save the downloaded file as ""%s"": %s", targetFile, moveMessage)
+    end
+
+    strLocalFilename = targetFile;
 
     if nargout < 1
         clear strLocalFilename
+    end
+end
+
+function filename = getRemoteFilename(response, uri)
+    %getRemoteFilename - Return the file name given by the server or the URL
+    %   The Content-Disposition file name takes precedence, as in the file
+    %   consumer. Only its last component is kept, because the server
+    %   controls it and folder parts such as "../" would write outside the
+    %   target folder. The result is "" when there is no usable name.
+    filename = "";
+
+    dispositionField = response.getFields("Content-Disposition");
+    if ~isempty(dispositionField)
+        filename = dispositionField(end).getParameter("filename");
+    end
+
+    if (isempty(filename) || strlength(filename) == 0) && ~isempty(uri.Path)
+        filename = uri.Path(end);
+    end
+
+    if isempty(filename)
+        filename = "";
+    end
+
+    [~, name, ext] = fileparts(string(filename));
+    filename = name + ext;
+    if any(filename == [".", ".."])
+        filename = "";
+    end
+end
+
+function deleteIfFile(filePath)
+    %deleteIfFile - Delete a file if it exists
+    if isfile(filePath)
+        delete(filePath)
     end
 end
