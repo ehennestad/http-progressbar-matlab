@@ -55,6 +55,8 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
         WaitbarHandle               % Handle to waitbar dialog
         ProgressDialogHandle        % Handle to uiprogressdlg.
         PreviousMessage = ''        % Previous message displayed in command window
+        BodyDirection               % Direction of the message that carries the file
+        BodySizeBytes               % Size in bytes of the message that carries the file
     end
     
     methods
@@ -99,9 +101,14 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
         end
 
         function name = get.ActionName(obj)
-            if obj.Direction == matlab.net.http.MessageType.Request
+            direction = obj.BodyDirection;
+            if isempty(direction)
+                direction = obj.Direction;
+            end
+
+            if direction == matlab.net.http.MessageType.Request
                 name = "Upload";
-            elseif obj.Direction == matlab.net.http.MessageType.Response
+            elseif direction == matlab.net.http.MessageType.Response
                 name = "Download";
             else
                 error('Unknown transfer mode')
@@ -141,7 +148,17 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
         %update Called when Value is set, handles monitor updating
 
             import matlab.net.http.*
-            
+
+            % A message without a body reports Max as 0. After an upload,
+            % the server's empty response switches Direction to Response
+            % while Value keeps the uploaded byte count. Remember the
+            % message that carries the file so that progress and the
+            % completion message keep describing that transfer.
+            if ~isempty(obj.Max) && obj.Max > 0
+                obj.BodyDirection = obj.Direction;
+                obj.BodySizeBytes = obj.Max;
+            end
+
             doUpdate = toc(obj.LastUpdateTime) > obj.UpdateInterval;
 
             if ~isempty(obj.Value) && doUpdate
@@ -383,7 +400,9 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
         end
 
         function fileSizeBytes = getFileSizeBytes(obj)
-            if ~isempty(obj.Max)
+            if ~isempty(obj.BodySizeBytes)
+                fileSizeBytes = obj.BodySizeBytes;
+            elseif ~isempty(obj.Max) && obj.Max > 0
                 fileSizeBytes = obj.Max;
             else
                 fileSizeBytes = obj.FileSizeBytes;
