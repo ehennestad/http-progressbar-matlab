@@ -63,6 +63,20 @@ function strLocalFilename = download(strLocalFilename, strURLFilename, options)
     
     [resp, ~, ~] = req.send(strURLFilename, webOpts, consumer);
 
+    % The file consumer writes the response body whatever the status, so a
+    % failed request leaves the server's error page at the target path.
+    % Body.Data holds the path that was written, which differs from the
+    % input when the input is a folder.
+    if resp.StatusCode.getClass() ~= matlab.net.http.StatusClass.Successful
+        if ~isempty(resp.Body) && ~isempty(resp.Body.Data) && isfile(resp.Body.Data)
+            delete(resp.Body.Data)
+        end
+        error("webprogress:download:RequestFailed", ...
+            "Download failed because the server responded with ""%s"". " + ...
+            "Check that the URL is correct and has not expired.", ...
+            string(resp.StatusLine))
+    end
+
     strLocalFilename = resp.Body.Data;
 
     if nargout < 1
