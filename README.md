@@ -22,19 +22,23 @@ Install the toolbox from MATLAB's Add-On Explorer or from [File Exchange](https:
 
 ## Getting started
 
+The functions live in the `webprogress` namespace, so each call is qualified with `webprogress.`
+
 ```matlab
 % Download a file. Progress is shown in a waitbar.
 url = "https://proof.ovh.net/files/100Mb.dat";
-downloadFile(fullfile(tempdir, "100Mb.dat"), url)
+webprogress.download(fullfile(tempdir, "100Mb.dat"), url)
 
 % Show progress in the Command Window instead, with the file name
-downloadFile(fullfile(tempdir, "100Mb.dat"), url, ...
+webprogress.download(fullfile(tempdir, "100Mb.dat"), url, ...
     "DisplayMode", "Command Window", "ShowFilename", true)
 
 % Upload a file with a PUT request to a URL that accepts uploads,
 % for example a presigned upload URL from a storage service
-wasSuccess = uploadFile("results.mat", uploadUrl);
+wasSuccess = webprogress.upload("results.mat", uploadUrl);
 ```
+
+The download target is saved exactly as given, without an added extension, and replaces an existing file. Give a folder instead of a file path to save under the name the server reports.
 
 Run `progressDialogDemo` to see the waitbar and a progress dialog in an app figure.
 
