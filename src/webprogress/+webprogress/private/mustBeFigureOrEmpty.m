@@ -4,7 +4,7 @@ function mustBeFigureOrEmpty(fig)
     end
 
     if ~(isscalar(fig) && isgraphics(fig, 'figure'))
-        error('filedownload:invalidFigure', ...
+        error('webprogress:validators:InvalidFigure', ...
             'Figure must be a scalar figure handle or empty.')
     end
 end

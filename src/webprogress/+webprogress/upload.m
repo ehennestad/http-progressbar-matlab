@@ -1,15 +1,15 @@
-function [wasSuccess, response] = uploadFile(strLocalFilename, strURLFilename, options)
-%uploadFile Upload a file to web while displaying progress.
+function [wasSuccess, response] = upload(strLocalFilename, strURLFilename, options)
+%upload Upload a file to web while displaying progress.
 %
-%   uploadFile(strLocalFilename, strURLFilename) uploads the file
+%   webprogress.upload(strLocalFilename, strURLFilename) uploads the file
 %   specified by the local path `strLocalFilename` to the web location
 %   specified by `strURLFilename`.
 %
-%   wasSuccess = uploadFile(localFilename, strURLFilename) uploads the file
+%   wasSuccess = webprogress.upload(localFilename, strURLFilename) uploads the file
 %   and returns a boolean value indicating if the upload was successful or
 %   not.
 %
-%   [wasSuccess, response] = uploadFile(localFilename, strURLFilename)
+%   [wasSuccess, response] = webprogress.upload(localFilename, strURLFilename)
 %   uploads the file and returns the wasSuccess boolean and a response
 %   object.
 %
@@ -35,7 +35,9 @@ function [wasSuccess, response] = uploadFile(strLocalFilename, strURLFilename, o
     end
 
     if options.ShowFilename
-        [~, filename, ext] = fileparts(strURLFilename);
+        % Show the name of the local file. The URL is an upload endpoint
+        % and its last segment need not match the file.
+        [~, filename, ext] = fileparts(strLocalFilename);
         filename = [char(filename), char(ext)];
     else
         filename = '';
@@ -49,7 +51,7 @@ function [wasSuccess, response] = uploadFile(strLocalFilename, strURLFilename, o
         'Figure', options.Figure };
     
     webOpts = matlab.net.http.HTTPOptions(...
-        'ProgressMonitorFcn', @(opts) FileTransferProgressMonitor(monitorOpts{:}),...
+        'ProgressMonitorFcn', @(opts) webprogress.FileTransferProgressMonitor(monitorOpts{:}),...
         'UseProgressMonitor', true, ...
         'ConnectTimeout', 20);
 
@@ -72,15 +74,16 @@ function [wasSuccess, response] = uploadFile(strLocalFilename, strURLFilename, o
     
     [response, ~, ~] = req.send(strURLFilename, webOpts);
     
-    if response.StatusCode == matlab.net.http.StatusCode.OK
-        wasSuccess = true;
-    else
-        wasSuccess = false;
-    end
+    % Servers acknowledge an upload with any 2xx status, for example
+    % 201 Created or 204 No Content, not only 200 OK.
+    wasSuccess = response.StatusCode.getClass() == matlab.net.http.StatusClass.Successful;
     
     if nargout < 1
         if ~wasSuccess
-            error(string(response.StatusLine))
+            error("webprogress:upload:RequestFailed", ...
+                "Upload failed because the server responded with ""%s"". " + ...
+                "Check that the URL is correct, has not expired and accepts this request method.", ...
+                string(response.StatusLine))
         end
         clear wasSuccess
     end
