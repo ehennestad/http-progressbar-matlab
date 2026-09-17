@@ -2,6 +2,7 @@
 
 [![Version Number](https://img.shields.io/github/v/release/ehennestad/http-progressbar-matlab?label=version)](https://github.com/ehennestad/http-progressbar-matlab/releases/latest)
 [![MATLAB Tests](.github/badges/tests.svg)](https://github.com/ehennestad/http-progressbar-matlab/actions/workflows/test-code.yml)
+[![codecov](https://codecov.io/gh/ehennestad/http-progressbar-matlab/graph/badge.svg?token=0KW9Q7178C)](https://codecov.io/gh/ehennestad/http-progressbar-matlab)
 [![MATLAB Code Issues](.github/badges/code_issues.svg)](https://github.com/ehennestad/http-progressbar-matlab/security/code-scanning)
 [![Run Codespell](https://github.com/ehennestad/http-progressbar-matlab/actions/workflows/run-codespell.yml/badge.svg)](https://github.com/ehennestad/http-progressbar-matlab/actions/workflows/run-codespell.yml)
 [![Maintenance](https://img.shields.io/badge/Maintained%3F-yes-green.svg)](https://gitHub.com/ehennestad/http-progressbar-matlab/graphs/commit-activity)
