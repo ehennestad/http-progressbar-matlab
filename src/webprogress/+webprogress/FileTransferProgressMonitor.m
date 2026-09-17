@@ -169,8 +169,13 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
                     progressValue = 0;
                     msg = sprintf('Waiting for %s to start...', lower(obj.ActionName));
                 else
-                    % Maximum known, update proportional value
-                    progressValue = obj.PercentTransferred / 100;
+                    % Maximum known, update proportional value. Keep it
+                    % within 0 to 1, which uiprogressdlg requires. The
+                    % fraction exceeds 1 when a caller-supplied
+                    % FileSizeBytes is smaller than the transfer, and is
+                    % NaN when a message without a body reports 0 bytes.
+                    % max ignores NaN, so NaN becomes 0.
+                    progressValue = min(max(obj.PercentTransferred / 100, 0), 1);
 
                     if obj.Direction == MessageType.Request % Sending
                         msg = obj.getProgressMessage();
