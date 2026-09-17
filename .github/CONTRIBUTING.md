@@ -13,7 +13,7 @@ Even if you're not ready to submit a solution, opening an issue is valuable.
 ## How to contribute
 
 ### 1. Check for existing issues  
-Before starting work, [check the existing issues](https://github.com/your-repo/issues) to see if your idea or bug has already been reported. You can join the conversation there or add new information.
+Before starting work, [check the existing issues](https://github.com/ehennestad/http-progressbar-matlab/issues) to see if your idea or bug has already been reported. You can join the conversation there or add new information.
 
 ### 2. Open a new issue  
 If no one has reported it yet, [create a new issue](https://docs.github.com/en/issues/tracking-your-work-with-issues/creating-an-issue). Be as clear and complete as possible—others may not share your context, so include:
