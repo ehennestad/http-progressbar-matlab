@@ -29,9 +29,16 @@ function strLocalFilename = download(strLocalFilename, strURLFilename, options)
         options.FileSizeBytes  (1,1) double                      = nan
     end
 
-    if options.ShowFilename
-        [~, filename, ext] = fileparts(strURLFilename);
-        filename = [char(filename), char(ext)];
+    % The URL is already percent-encoded, as any URL handed out by a web
+    % service is. Without 'literal' the URI constructor would encode it a
+    % second time ("%20" would become "%2520") and the server would
+    % reject every name with a space or other encoded character.
+    uri = matlab.net.URI(strURLFilename, 'literal');
+
+    if options.ShowFilename && ~isempty(uri.Path)
+        % URI.Path holds the decoded path segments and excludes the query,
+        % which for a signed URL carries the signature.
+        filename = char(uri.Path(end));
     else
         filename = '';
     end
@@ -55,13 +62,7 @@ function strLocalFilename = download(strLocalFilename, strURLFilename, options)
     method = matlab.net.http.RequestMethod.GET;
     req = matlab.net.http.RequestMessage(method, [], []);
     
-    % The URL is already percent-encoded, as any URL handed out by a web
-    % service is. Without 'literal' the URI constructor would encode it a
-    % second time ("%20" would become "%2520") and the server would
-    % reject every name with a space or other encoded character.
-    strURLFilename = matlab.net.URI(strURLFilename, 'literal');
-    
-    [resp, ~, ~] = req.send(strURLFilename, webOpts, consumer);
+    [resp, ~, ~] = req.send(uri, webOpts, consumer);
 
     % The file consumer writes the response body whatever the status, so a
     % failed request leaves the server's error page at the target path.

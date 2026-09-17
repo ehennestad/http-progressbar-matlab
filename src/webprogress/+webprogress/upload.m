@@ -35,7 +35,9 @@ function [wasSuccess, response] = upload(strLocalFilename, strURLFilename, optio
     end
 
     if options.ShowFilename
-        [~, filename, ext] = fileparts(strURLFilename);
+        % Show the name of the local file. The URL is an upload endpoint
+        % and its last segment need not match the file.
+        [~, filename, ext] = fileparts(strLocalFilename);
         filename = [char(filename), char(ext)];
     else
         filename = '';
