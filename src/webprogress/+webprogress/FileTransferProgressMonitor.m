@@ -22,9 +22,9 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
 %   Written by Eivind Hennestad
     
     properties (SetAccess = private) % User settings for monitor
-        DisplayMode = 'Dialog Box'; % Where to display progress.
+        DisplayMode = "Dialog Box"  % Where to display progress.
         UpdateInterval = 1          % Interval (in seconds) for updating progress.
-        Filename = ''               % Name of downloaded/uploaded file.
+        Filename = ""               % Name of downloaded/uploaded file.
         IndentSize = 0              % Size of indentation (number of spaces) if displaying progress in command window.
         Figure = []                 % Parent figure for uiprogressdlg.
     end
@@ -60,28 +60,18 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
     end
     
     methods
-        function obj = FileTransferProgressMonitor(varargin)
-            
-            % Parse optional inputs and assign as property values. Only
-            % the documented options are accepted: a misspelled name would
-            % otherwise be ignored without notice, and isprop would also
-            % accept internal properties such as StartTime.
-            validOptionNames = ["DisplayMode", "UpdateInterval", "Filename", ...
-                "IndentSize", "Figure", "FileSizeBytes"];
-
-            [names, values] = obj.parseVarargin(varargin);
-            if numel(names) ~= numel(values)
-                error("webprogress:FileTransferProgressMonitor:InvalidOptions", ...
-                    "Options must be given as name-value pairs.")
+        function obj = FileTransferProgressMonitor(options)
+            arguments
+                options.DisplayMode    (1,1) string {mustBeValidDisplay}  = "Dialog Box"
+                options.UpdateInterval (1,1) double {mustBeNonnegative}   = 1
+                options.Filename       (1,1) string                       = ""
+                options.IndentSize     (1,1) uint8                        = 0
+                options.Figure                      {mustBeFigureOrEmpty} = []
+                options.FileSizeBytes  (1,1) double                       = nan
             end
 
-            for i = 1:numel(names)
-                if ~any(strcmp(names{i}, validOptionNames))
-                    error("webprogress:FileTransferProgressMonitor:UnknownOption", ...
-                        "Unknown option ""%s"". Valid options are %s.", ...
-                        string(names{i}), strjoin(validOptionNames, ", "))
-                end
-                obj.(names{i}) = values{i};
+            for optionName = string(fieldnames(options))'
+                obj.(optionName) = options.(optionName);
             end
             
             obj.Interval = 1;
@@ -333,8 +323,8 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
             % Make ongoing present action verb, i.e [Download]ing or [Upload]ing
             action = sprintf('%sing', obj.ActionName);
 
-            if ~isempty(obj.Filename)
-                if numel(char(obj.Filename)) <= 26
+            if strlength(obj.Filename) > 0
+                if strlength(obj.Filename) <= 26
                     displayedFilename = obj.Filename;
                 else
                     displayedFilename = obj.shortenFilename(obj.Filename);
@@ -431,21 +421,6 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
 
     methods (Static)
 
-        function [names, values] = parseVarargin(vararginCellArray)
-        %parseVarargin Parse varargin (split names and values)
-            [names, values] = deal({});
-            
-            if isempty(vararginCellArray)
-                return
-            elseif isscalar(vararginCellArray) && isstruct(vararginCellArray{1})
-                names = fieldnames(vararginCellArray{1});
-                values = struct2cell(vararginCellArray{1});
-            else
-                names = vararginCellArray(1:2:end);
-                values = vararginCellArray(2:2:end);
-            end
-        end
-            
         function durationStr = formatTimeAsString(durationValue)
         %formatTimeAsString Format time showing the leading unit.
             if hours(durationValue) > 1
