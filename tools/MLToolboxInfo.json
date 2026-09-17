@@ -8,6 +8,7 @@
         "AuthorCompany": "",
         "Summary": "Download and upload files over HTTP with a live progress display",
         "Description": "Download files from the web and upload files to the web while showing live progress, using MATLAB's HTTP interface. Progress is shown in a waitbar, in a progress dialog attached to an app figure, or in the Command Window. It includes the transferred size, the percentage and an estimate of the remaining time.",
+        "ToolboxGettingStartedGuide": "src/webprogress/examples/progressDialogDemo.m",
         "MinimumMatlabRelease": "R2019b",
         "MaximumMatlabRelease": ""
     }
