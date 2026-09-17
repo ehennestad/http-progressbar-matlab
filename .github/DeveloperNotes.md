@@ -9,7 +9,8 @@ http-progressbar-matlab/
 ├── src/webprogress/                               # Main toolbox source code
 │   ├── +webprogress/                              # MATLAB package namespace
 │   ├── Contents.m                                 # Toolbox contents listing
-│   └── gettingStarted.m                           # Getting started guide
+│   └── examples/                                  # Examples
+│       └── progressDialogDemo.m                   # Getting started guide
 ├── tests/                                         # Unit tests and test utilities
 │   ├── +webprogress/                              # Namespace for unit tests and test utilites
 ├── tools/                                         # Development and build tools
