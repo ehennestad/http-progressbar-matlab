@@ -18,12 +18,7 @@ It is recommended to use **MATLAB R2019b** or later.
 The following MathWorks products are required:
 - MATLAB
 
-Users or developers who clone the repository using git can use [MatBox](https://github.com/ehennestad/MatBox) to quickly install this project's [requirements](./requirements.txt) (if any):
-
-```matlab
-webprogresstools.installMatBox() % If MatBox is not installed
-matbox.installRequirements(path/to/toolboxRootDir)
-```
+Install the toolbox from MATLAB's Add-On Explorer or from [File Exchange](https://www.mathworks.com/matlabcentral/fileexchange/118460-file-downloader-uploader-with-progress-monitor). To use a clone of this repository, add `src/webprogress` to the MATLAB path.
 
 ## Getting started
 
