@@ -72,15 +72,16 @@ function [wasSuccess, response] = upload(strLocalFilename, strURLFilename, optio
     
     [response, ~, ~] = req.send(strURLFilename, webOpts);
     
-    if response.StatusCode == matlab.net.http.StatusCode.OK
-        wasSuccess = true;
-    else
-        wasSuccess = false;
-    end
+    % Servers acknowledge an upload with any 2xx status, for example
+    % 201 Created or 204 No Content, not only 200 OK.
+    wasSuccess = response.StatusCode.getClass() == matlab.net.http.StatusClass.Successful;
     
     if nargout < 1
         if ~wasSuccess
-            error(string(response.StatusLine))
+            error("webprogress:upload:RequestFailed", ...
+                "Upload failed because the server responded with ""%s"". " + ...
+                "Check that the URL is correct, has not expired and accepts this request method.", ...
+                string(response.StatusLine))
         end
         clear wasSuccess
     end
