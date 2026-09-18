@@ -1,7 +1,8 @@
 name: Run Codespell
 
-# NB: Will only process "skip" and "ignore-words-list" from the codespell 
-# config file if provided
+# This repository needs no codespell configuration, so it runs with
+# codespell's own defaults: nothing skipped and no ignored words. Pass
+# config_file to the reusable workflow if that ever changes.
 
 on:
   push:
@@ -20,7 +21,3 @@ jobs:
     name: Run Codespell
     if: github.run_number > 1
     uses: ehennestad/matbox-actions/.github/workflows/codespell-workflow.yml@v1
-    with:
-      # Specify the path of a codespell config file relative to the repository 
-      # root directory
-      config_file: .codespellrc
