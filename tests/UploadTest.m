@@ -96,6 +96,27 @@ classdef UploadTest < matlab.unittest.TestCase
 
             testCase.verifySubstring(output, ['Uploading ', testCase.FileName])
         end
+
+        function testTitleShowsGivenFilename(testCase)
+            output = captureOutput(@() webprogress.upload(testCase.FilePath, ...
+                testCase.statusUrl(201), ...
+                'DisplayMode', 'Command Window', 'UpdateInterval', 0.001, ...
+                'Filename', 'folder/object name.bin'));
+
+            testCase.verifySubstring(output, 'Uploading folder/object name.bin')
+        end
+
+        function testGivenFilenameReplacesLocalFileName(testCase)
+            import matlab.unittest.constraints.ContainsSubstring
+
+            output = captureOutput(@() webprogress.upload(testCase.FilePath, ...
+                testCase.statusUrl(201), ...
+                'DisplayMode', 'Command Window', 'UpdateInterval', 0.001, ...
+                'ShowFilename', true, 'Filename', 'object name.bin'));
+
+            testCase.verifySubstring(output, 'Uploading object name.bin')
+            testCase.verifyThat(output, ~ContainsSubstring(testCase.FileName))
+        end
     end
 
     methods (Access = private)

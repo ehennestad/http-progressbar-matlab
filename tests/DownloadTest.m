@@ -73,6 +73,31 @@ classdef DownloadTest < matlab.unittest.TestCase
 
             testCase.verifyFalse(isfile(filePath))
         end
+
+        function testTitleShowsGivenFilename(testCase)
+            filePath = fullfile(testCase.TemporaryFolder, 'data.json');
+
+            output = captureOutput(@() webprogress.download(filePath, ...
+                testCase.BaseUrl + testCase.SmallFileName, ...
+                'DisplayMode', 'Command Window', ...
+                'Filename', 'folder/object.json'));
+
+            testCase.verifySubstring(output, 'Downloading folder/object.json')
+        end
+
+        function testGivenFilenameReplacesNameFromUrl(testCase)
+            import matlab.unittest.constraints.ContainsSubstring
+            filePath = fullfile(testCase.TemporaryFolder, 'data.json');
+
+            output = captureOutput(@() webprogress.download(filePath, ...
+                testCase.BaseUrl + testCase.SmallFileName, ...
+                'DisplayMode', 'Command Window', ...
+                'ShowFilename', true, 'Filename', 'object.json'));
+
+            testCase.verifySubstring(output, 'Downloading object.json')
+            testCase.verifyThat(output, ...
+                ~ContainsSubstring(char(testCase.SmallFileName)))
+        end
     end
 end
 
@@ -84,4 +109,9 @@ function savedPath = downloadQuietly(target, url) %#ok<INUSD> used inside evalc
     savedPath = '';
     evalc(['savedPath = webprogress.download(target, url, ', ...
         '''DisplayMode'', ''Command Window'');']);
+end
+
+function output = captureOutput(fcn) %#ok<INUSD> fcn is called inside evalc
+    %captureOutput - Call a function and return its Command Window output
+    output = evalc('fcn()');
 end
