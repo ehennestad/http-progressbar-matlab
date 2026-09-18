@@ -156,10 +156,14 @@ classdef DownloadTargetTest < matlab.unittest.TestCase
     end
 end
 
-function savedPath = downloadQuietly(target, url)
-    %downloadQuietly - Download with Command Window progress that never prints
-    savedPath = webprogress.download(target, url, ...
-        'DisplayMode', 'Command Window', 'UpdateInterval', 3600);
+function savedPath = downloadQuietly(target, url) %#ok<INUSD> used inside evalc
+    %downloadQuietly - Download without printing progress
+    %   The monitor displays the first progress it receives whatever the
+    %   update interval, so the output has to be captured to keep it out
+    %   of the Command Window. evalc passes an error on to the caller.
+    savedPath = '';
+    evalc(['savedPath = webprogress.download(target, url, ', ...
+        '''DisplayMode'', ''Command Window'');']);
 end
 
 function names = listFiles(folder)

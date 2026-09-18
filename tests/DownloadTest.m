@@ -49,18 +49,16 @@ classdef DownloadTest < matlab.unittest.TestCase
         function testDownloadSavesFile(testCase)
             filePath = fullfile(testCase.TemporaryFolder, 'data.json');
 
-            savedPath = webprogress.download(filePath, ...
-                testCase.BaseUrl + testCase.SmallFileName, ...
-                'DisplayMode', 'Command Window');
+            savedPath = downloadQuietly(filePath, ...
+                testCase.BaseUrl + testCase.SmallFileName);
 
             testCase.verifyTrue(isfile(filePath))
             testCase.verifyTrue(isfile(savedPath))
         end
 
         function testDownloadToFolderUsesNameFromUrl(testCase)
-            webprogress.download(testCase.TemporaryFolder, ...
-                testCase.BaseUrl + testCase.SmallFileName, ...
-                'DisplayMode', 'Command Window');
+            downloadQuietly(testCase.TemporaryFolder, ...
+                testCase.BaseUrl + testCase.SmallFileName);
 
             expectedPath = fullfile(testCase.TemporaryFolder, testCase.SmallFileName);
             testCase.verifyTrue(isfile(expectedPath))
@@ -70,11 +68,20 @@ classdef DownloadTest < matlab.unittest.TestCase
             filePath = fullfile(testCase.TemporaryFolder, 'missing.json');
             url = testCase.BaseUrl + "this_key_does_not_exist.json";
 
-            testCase.verifyError( ...
-                @() webprogress.download(filePath, url, 'DisplayMode', 'Command Window'), ...
+            testCase.verifyError(@() downloadQuietly(filePath, url), ...
                 'webprogress:download:RequestFailed')
 
             testCase.verifyFalse(isfile(filePath))
         end
     end
+end
+
+function savedPath = downloadQuietly(target, url) %#ok<INUSD> used inside evalc
+    %downloadQuietly - Download without printing progress
+    %   The monitor displays the first progress it receives whatever the
+    %   update interval, so the output has to be captured to keep it out
+    %   of the Command Window. evalc passes an error on to the caller.
+    savedPath = '';
+    evalc(['savedPath = webprogress.download(target, url, ', ...
+        '''DisplayMode'', ''Command Window'');']);
 end

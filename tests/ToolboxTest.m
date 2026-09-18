@@ -12,7 +12,10 @@ classdef ToolboxTest <  matlab.unittest.TestCase
         function testToolboxVersion(testCase)
             versionStr = webprogress.toolboxversion();
             testCase.verifyClass(versionStr, 'char')
-            testCase.verifyTrue(startsWith(versionStr, 'Version'))
+
+            % The version is the number alone, in major.minor.patch form
+            % with an optional sub-patch number.
+            testCase.verifyMatches(versionStr, '^\d+\.\d+\.\d+(\.\d+)?$')
         end
     end
 end

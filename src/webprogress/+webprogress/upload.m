@@ -1,4 +1,4 @@
-function [wasSuccess, response] = upload(strLocalFilename, strURLFilename, options)
+function [wasSuccess, response] = upload(filePath, url, options)
 %upload - Upload a file to the web and display progress
 %   webprogress.upload(FILENAME,URL) uploads the file FILENAME to URL
 %   with a PUT request and shows progress in a waitbar. Percent-encoded
@@ -42,8 +42,8 @@ function [wasSuccess, response] = upload(strLocalFilename, strURLFilename, optio
 %   Written by Eivind Hennestad
 
     arguments
-        strLocalFilename       char         {mustBeNonempty}
-        strURLFilename         char         {mustBeValidUrl}
+        filePath               char         {mustBeNonempty}
+        url                    char         {mustBeValidUrl}
         options.DisplayMode    char         {mustBeValidDisplay} = 'Dialog Box'
         options.UpdateInterval (1,1) double {mustBePositive}     = 1
         options.ShowFilename   (1,1) logical                     = false
@@ -55,7 +55,7 @@ function [wasSuccess, response] = upload(strLocalFilename, strURLFilename, optio
     if options.ShowFilename
         % Show the name of the local file. The URL is an upload endpoint
         % and its last segment need not match the file.
-        [~, filename, ext] = fileparts(strLocalFilename);
+        [~, filename, ext] = fileparts(filePath);
         filename = [char(filename), char(ext)];
     else
         filename = '';
@@ -74,7 +74,7 @@ function [wasSuccess, response] = upload(strLocalFilename, strURLFilename, optio
         'ConnectTimeout', 20);
 
     % Create a file provider for uploading the file
-    provider = matlab.net.http.io.FileProvider(strLocalFilename);
+    provider = matlab.net.http.io.FileProvider(filePath);
 
     if isempty(options.RequestMessage)
         method = matlab.net.http.RequestMethod.PUT;
@@ -88,9 +88,9 @@ function [wasSuccess, response] = upload(strLocalFilename, strURLFilename, optio
     % service is. Without 'literal' the URI constructor would encode it a
     % second time ("%20" would become "%2520") and the server would
     % reject every name with a space or other encoded character.
-    strURLFilename = matlab.net.URI(strURLFilename, 'literal');
+    uri = matlab.net.URI(url, 'literal');
     
-    [response, ~, ~] = req.send(strURLFilename, webOpts);
+    [response, ~, ~] = req.send(uri, webOpts);
     
     % Servers acknowledge an upload with any 2xx status, for example
     % 201 Created or 204 No Content, not only 200 OK.
