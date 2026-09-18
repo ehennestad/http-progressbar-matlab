@@ -1,6 +1,13 @@
-classdef ToolboxTest <  matlab.unittest.TestCase
+classdef ToolboxTest < matlab.unittest.TestCase
 % ToolboxTest - Unit test for testing the toolbox functions.
 
+    methods (TestClassSetup)
+        function addSourceToPath(testCase)
+            sourceFolder = fullfile(fileparts(fileparts(mfilename('fullpath'))), ...
+                'src', 'webprogress');
+            testCase.applyFixture(matlab.unittest.fixtures.PathFixture(sourceFolder));
+        end
+    end
 
     methods (Test)
         function testToolboxDir(testCase)
