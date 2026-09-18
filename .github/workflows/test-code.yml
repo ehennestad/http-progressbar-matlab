@@ -27,7 +27,7 @@ jobs:
     with:
       # Path to directory with code. Code coverage and code analysis will run 
       # on the contents of the specified folder (and subfolders)
-      source_directory: src
+      source_directory: src/webprogress
       
       # Path to directory with (CI) tools or tests. Used for finding unit tests
       # and running customized MatBox tasks
