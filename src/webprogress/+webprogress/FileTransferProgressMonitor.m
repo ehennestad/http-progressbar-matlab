@@ -74,7 +74,14 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
                 obj.(optionName) = options.(optionName);
             end
             
-            obj.Interval = 1;
+            % Interval is the delay before the HTTP stack makes its
+            % first call to the monitor, not a limit on how often it
+            % calls. Leaving it at one second hides progress for the
+            % first second of every transfer and shows nothing at all
+            % for a transfer that finishes sooner. Keep it at or below
+            % one second, which is the longest the stack should wait
+            % before reporting progress.
+            obj.Interval = min(obj.UpdateInterval, 1);
             [obj.StartTime, obj.LastUpdateTime] = deal( tic );
         end
         

@@ -15,6 +15,11 @@ classdef FileTransferProgressMonitorTest < matlab.unittest.TestCase
             'seconds', struct('Value', seconds(30), 'Expected', '30 seconds'), ...
             'minutes', struct('Value', minutes(5), 'Expected', '5 minutes'), ...
             'hours', struct('Value', hours(2), 'Expected', '2 hours'));
+
+        intervalCase = struct( ...
+            'subSecond', struct('UpdateInterval', 0.25, 'Expected', 0.25), ...
+            'oneSecond', struct('UpdateInterval', 1, 'Expected', 1), ...
+            'longerThanOneSecond', struct('UpdateInterval', 3600, 'Expected', 1));
     end
 
     properties (Constant)
@@ -40,6 +45,17 @@ classdef FileTransferProgressMonitorTest < matlab.unittest.TestCase
             testCase.verifyEqual(monitor.Filename, "data.bin")
             testCase.verifyEqual(monitor.IndentSize, uint8(4))
             testCase.verifyEqual(monitor.FileSizeBytes, 1000)
+        end
+
+        function testIntervalFollowsUpdateInterval(testCase, intervalCase)
+            % Interval is the delay before the HTTP stack first calls the
+            % monitor. A sub-second UpdateInterval only reaches the display
+            % when Interval comes down with it, and a transfer shorter than
+            % Interval shows no progress at all.
+            monitor = webprogress.FileTransferProgressMonitor( ...
+                'UpdateInterval', intervalCase.UpdateInterval);
+
+            testCase.verifyEqual(monitor.Interval, intervalCase.Expected)
         end
 
         function testUnknownOptionErrors(testCase, unknownOptionName)
