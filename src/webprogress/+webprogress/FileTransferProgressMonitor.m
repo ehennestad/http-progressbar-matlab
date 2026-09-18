@@ -402,14 +402,7 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
         function str = getRemainingTimeEstimate(obj)
         %getRemainingTimeEstimate - Return the estimated remaining time
             tElapsed = seconds( toc(obj.StartTime) );
-            tRemaining = round( (tElapsed ./ obj.PercentTransferred) .* (100-obj.PercentTransferred) );
-
-            if seconds(tElapsed) > 10
-                tRemainingStr = obj.formatTimeAsString(tRemaining);
-                str = sprintf('Estimated time remaining: %s...', tRemainingStr);
-            else
-                str = 'Estimating remaining time...';
-            end
+            str = obj.formatRemainingTimeEstimate(tElapsed, obj.PercentTransferred);
         end
 
         function strMessage = getTransferCompletedMessage(obj)
@@ -453,6 +446,24 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
     end
 
     methods (Static)
+
+        function str = formatRemainingTimeEstimate(tElapsed, percentTransferred)
+        %formatRemainingTimeEstimate - Return the remaining time message
+        %   Over the first ten seconds the measured transfer rate is too
+        %   noisy to extrapolate from. A transfer that has not moved, or
+        %   one whose total size is unknown, gives no estimate at all:
+        %   the remaining time works out as Inf at zero percent and as
+        %   NaN for an unknown size.
+            hasUsableRate = seconds(tElapsed) > 10 && percentTransferred > 0;
+
+            if hasUsableRate
+                tRemaining = round( (tElapsed ./ percentTransferred) .* (100-percentTransferred) );
+                tRemainingStr = webprogress.FileTransferProgressMonitor.formatTimeAsString(tRemaining);
+                str = sprintf('Estimated time remaining: %s...', tRemainingStr);
+            else
+                str = 'Estimating remaining time...';
+            end
+        end
 
         function durationStr = formatTimeAsString(durationValue)
         %formatTimeAsString - Format a duration using its largest whole unit
