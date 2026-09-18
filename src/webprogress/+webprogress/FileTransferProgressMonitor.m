@@ -203,15 +203,28 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
                 if isempty(obj.Max) && isnan(obj.FileSizeBytes)
                     % Maximum (size of request/response) is not known,
                     % file transfer did not start yet.
+                    %
+                    % A message without a body reports Max as 0, not as
+                    % empty, so it does not match here and would fall
+                    % through to the size message below and format an
+                    % unknown size as "NaN MB". No transfer reaches that
+                    % state. Logging what the stack sets shows it leaves
+                    % Value unset for a message without a body, and
+                    % update only ever runs from set.Value. The one
+                    % message with Max 0 that does carry a Value is the
+                    % empty response after an upload, and by then
+                    % BodySizeBytes already holds the uploaded size. Add
+                    % a Max == 0 case here only alongside a transfer that
+                    % is shown to reach it.
                     progressValue = 0;
                     msg = sprintf('Waiting for %s to start...', lower(obj.ActionName));
                 else
                     % Maximum known, update proportional value. Keep it
                     % within 0 to 1, which uiprogressdlg requires. The
                     % fraction exceeds 1 when a caller-supplied
-                    % FileSizeBytes is smaller than the transfer, and is
-                    % NaN when a message without a body reports 0 bytes.
-                    % max ignores NaN, so NaN becomes 0.
+                    % FileSizeBytes is smaller than the transfer. max
+                    % ignores NaN, so an unknown size gives 0 rather
+                    % than an error.
                     progressValue = min(max(obj.PercentTransferred / 100, 0), 1);
 
                     % An upload and a download are described the same
