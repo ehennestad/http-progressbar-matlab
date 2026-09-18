@@ -24,7 +24,7 @@ jobs:
       
       # Path to directory containing source code. This directory will be packaged
       # into the toolbox. Important: This should not be a namespace directory
-      source_directory: src
+      source_directory: src/webprogress
       
       # Path to directory containing tools and MLToolboxInfo.json. Used for finding
       # unit tests, running customized MatBox tasks, and determining toolbox metadata
