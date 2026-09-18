@@ -27,9 +27,6 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
         Filename = ""               % Name of downloaded/uploaded file.
         IndentSize = 0              % Size of indentation (number of spaces) if displaying progress in command window.
         Figure = []                 % Parent figure for uiprogressdlg.
-    end
-
-    properties
         FileSizeBytes = nan         % Known file size when ProgressMonitor.Max is not available.
     end
 
@@ -57,6 +54,16 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
         PreviousMessage = ''        % Previous message displayed in command window
         BodyDirection               % Direction of the message that carries the file
         BodySizeBytes               % Size in bytes of the message that carries the file
+        HasDisplayedProgress = false % Whether progress has been displayed at least once
+        WasCancelled = false        % Whether the user cancelled the transfer
+    end
+
+    properties (Constant, Access = private)
+        % Longest delay the monitor accepts before the HTTP stack makes
+        % its first call to it. Measured against a local server, a
+        % transfer of a few kilobytes reports no progress at all when
+        % this is above 0.01 seconds.
+        MaximumCallbackInterval = 0.01
     end
     
     methods
@@ -76,12 +83,13 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
             
             % Interval is the delay before the HTTP stack makes its
             % first call to the monitor, not a limit on how often it
-            % calls. Leaving it at one second hides progress for the
-            % first second of every transfer and shows nothing at all
-            % for a transfer that finishes sooner. Keep it at or below
-            % one second, which is the longest the stack should wait
-            % before reporting progress.
-            obj.Interval = min(obj.UpdateInterval, 1);
+            % calls, and the stack skips that call when the transfer
+            % finishes first. Leaving it at UpdateInterval therefore
+            % hides every transfer that completes within one interval.
+            % Cap it well below the shortest transfer worth reporting;
+            % UpdateInterval still limits how often the display is
+            % refreshed once progress starts arriving.
+            obj.Interval = min(obj.UpdateInterval, obj.MaximumCallbackInterval);
             [obj.StartTime, obj.LastUpdateTime] = deal( tic );
         end
         
@@ -102,12 +110,6 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
             obj.closeWaitbar();
         end
         
-        function set.Direction(obj, dir)
-        %set.Direction - Set the direction of the current message
-            obj.Direction = dir;
-            % fprintf('Direction set: %s\n', obj.Direction)
-        end
-        
         function set.Value(obj, value)
         %set.Value - Set the transferred byte count and update progress
             obj.Value = value;
@@ -126,7 +128,9 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
             elseif direction == matlab.net.http.MessageType.Response
                 name = "Download";
             else
-                error('Unknown transfer mode')
+                error("webprogress:progressMonitor:UnknownDirection", ...
+                    "Cannot name the transfer because its direction is neither a " + ...
+                    "request nor a response. Set Direction before reading ActionName.")
             end
         end
 
@@ -168,7 +172,14 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
         function update(obj, ~)
         %update - Refresh the progress display after Value changes
 
-            import matlab.net.http.*
+            % The HTTP stack keeps reporting byte counts for a while
+            % after a cancellation, because it aborts the transfer at
+            % its next opportunity rather than at once. Without this the
+            % next report would open a fresh dialog for a transfer the
+            % user has already given up on.
+            if obj.WasCancelled
+                return
+            end
 
             % A message without a body reports Max as 0. After an upload,
             % the server's empty response switches Direction to Response
@@ -180,41 +191,50 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
                 obj.BodySizeBytes = obj.Max;
             end
 
-            doUpdate = toc(obj.LastUpdateTime) > obj.UpdateInterval;
+            % Display the first progress as soon as it arrives.
+            % UpdateInterval limits how often the display is refreshed
+            % after that, so waiting for it here would leave a transfer
+            % that finishes within one interval showing nothing at all.
+            doUpdate = ~obj.HasDisplayedProgress ...
+                || toc(obj.LastUpdateTime) > obj.UpdateInterval;
 
             if ~isempty(obj.Value) && doUpdate
                 
                 if isempty(obj.Max) && isnan(obj.FileSizeBytes)
                     % Maximum (size of request/response) is not known,
                     % file transfer did not start yet.
+                    %
+                    % A message without a body reports Max as 0, not as
+                    % empty, so it does not match here and would fall
+                    % through to the size message below and format an
+                    % unknown size as "NaN MB". No transfer reaches that
+                    % state. Logging what the stack sets shows it leaves
+                    % Value unset for a message without a body, and
+                    % update only ever runs from set.Value. The one
+                    % message with Max 0 that does carry a Value is the
+                    % empty response after an upload, and by then
+                    % BodySizeBytes already holds the uploaded size. Add
+                    % a Max == 0 case here only alongside a transfer that
+                    % is shown to reach it.
                     progressValue = 0;
                     msg = sprintf('Waiting for %s to start...', lower(obj.ActionName));
                 else
                     % Maximum known, update proportional value. Keep it
                     % within 0 to 1, which uiprogressdlg requires. The
                     % fraction exceeds 1 when a caller-supplied
-                    % FileSizeBytes is smaller than the transfer, and is
-                    % NaN when a message without a body reports 0 bytes.
-                    % max ignores NaN, so NaN becomes 0.
+                    % FileSizeBytes is smaller than the transfer. max
+                    % ignores NaN, so an unknown size gives 0 rather
+                    % than an error.
                     progressValue = min(max(obj.PercentTransferred / 100, 0), 1);
 
-                    if obj.Direction == MessageType.Request % Sending
-                        msg = obj.getProgressMessage();
-                        obj.HasTransferStarted = true;
-
-                    elseif obj.Direction == MessageType.Response
-                        if ~obj.HasTransferStarted
-                            obj.HasTransferStarted = true;
-                        end
-                        msg = obj.getProgressMessage();
-                    else
-                        error('Unknown Messagetype')
-                    end
+                    % An upload and a download are described the same
+                    % way. ActionName rejects any other direction.
+                    msg = obj.getProgressMessage();
+                    obj.HasTransferStarted = true;
                 end
 
                 if obj.cancelWasRequested()
-                    obj.CancelFcn();
-                    obj.closeProgressDialog();
+                    obj.cancelTransfer();
                     return
                 end
 
@@ -228,34 +248,33 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
                     % If we don't have a progress bar, display it for first time
                     obj.WaitbarHandle = waitbar(progressValue, msg, ...
                         'Name', obj.getProgressTitle(), ...
-                        'CreateCancelBtn', @(~,~) cancelAndClose(obj));
+                        'CreateCancelBtn', @(~,~) obj.cancelTransfer());
                 elseif isempty(obj.PreviousMessage) && obj.UseCommandWindow
                     indentStr = repmat(' ', 1, obj.IndentSize);
                     fprintf('%s%s', indentStr, obj.getProgressTitle() )
-                    if ~ischar(msg) && ~isscalar(msg)
-                        msg = strjoin(msg, ' ');
-                    end
                     obj.updateCommandWindowMessage(msg)
+                end
+
+                % Creating the waitbar draws it, so its cancel button can
+                % fire before its handle reaches WaitbarHandle and the
+                % close in cancelTransfer finds nothing to close.
+                if obj.WasCancelled
+                    obj.closeWaitbar();
+                    return
                 end
 
                 if obj.HasTransferStarted
                     if obj.UseUIProgressDialog
                         obj.updateProgressDialog(progressValue, msg);
                     elseif obj.UseWaitbarDialog
-                        waitbar(progressValue, obj.WaitbarHandle, msg);
+                        obj.updateWaitbar(progressValue, msg);
                     else
                         obj.updateCommandWindowMessage(msg)
                     end
                 end
 
+                obj.HasDisplayedProgress = true;
                 obj.LastUpdateTime = tic;
-            end
-            
-            function cancelAndClose(obj)
-            % Call the required CancelFcn and then close our progress bar.
-            % This is called when user clicks cancel or closes the window.
-                obj.CancelFcn();
-                obj.closeWaitbar();
             end
         end
         
@@ -288,8 +307,7 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
         function updateProgressDialog(obj, progressValue, msg)
         %updateProgressDialog - Update the value and message of uiprogressdlg
             if obj.cancelWasRequested()
-                obj.CancelFcn();
-                obj.closeProgressDialog();
+                obj.cancelTransfer();
                 return
             end
 
@@ -306,6 +324,34 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
             drawnow limitrate
         end
 
+        function updateWaitbar(obj, progressValue, msg)
+        %updateWaitbar - Update the value and message of the waitbar
+            if ~obj.waitbarIsValid()
+                obj.WaitbarHandle = [];
+                return
+            end
+
+            waitbar(progressValue, obj.WaitbarHandle, msg);
+        end
+
+        function cancelTransfer(obj)
+        %cancelTransfer - Abort the transfer and close the progress display
+        %   Called when the user presses Cancel or closes the progress
+        %   window. WasCancelled keeps update from opening a new display
+        %   for the byte counts that still arrive before the HTTP stack
+        %   acts on the abort.
+            obj.WasCancelled = true;
+
+            % CancelFcn is empty until the HTTP stack assigns it, which
+            % it does only for a transfer that the stack itself drives.
+            if ~isempty(obj.CancelFcn)
+                obj.CancelFcn();
+            end
+
+            obj.closeProgressDialog();
+            obj.closeWaitbar();
+        end
+
         function tf = cancelWasRequested(obj)
         %cancelWasRequested - Return whether the user pressed Cancel
             tf = obj.progressDialogIsValid() ...
@@ -316,6 +362,12 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
         %progressDialogIsValid - Return whether the progress dialog is open
             tf = ~isempty(obj.ProgressDialogHandle) ...
                 && isvalid(obj.ProgressDialogHandle);
+        end
+
+        function tf = waitbarIsValid(obj)
+        %waitbarIsValid - Return whether the waitbar is open
+            tf = ~isempty(obj.WaitbarHandle) ...
+                && isvalid(obj.WaitbarHandle);
         end
 
         function closeProgressDialog(obj)
@@ -364,11 +416,10 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
         function strMessage = getProgressMessage(obj)
         %getProgressMessage - Return the progress and time estimate message
             
-            strMessage = obj.getTransferStatus();
-            strRemainingTime = obj.getRemainingTimeEstimate();
-            if ~isempty(strRemainingTime)
-                strMessage = strjoin({strMessage, strRemainingTime});
-            end
+            % getRemainingTimeEstimate always returns a message, either
+            % an estimate or a note that it cannot make one yet.
+            strMessage = strjoin({obj.getTransferStatus(), ...
+                obj.getRemainingTimeEstimate()});
             
             % "Animate" ellipsis
             if isempty(obj.PreviousMessage)
@@ -393,6 +444,15 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
 
             % Make past tense action verb, i.e [Download]ed or [Upload]ed
             action = sprintf('%sed', obj.ActionName);
+
+            % The size is unknown when neither the message nor the caller
+            % reports it, which is what a message without a body does by
+            % reporting 0 bytes. Report the transferred size on its own
+            % rather than a total and a percentage that are both NaN.
+            if isnan(double(obj.getFileSizeBytes()))
+                str = sprintf('%s %d MB.', action, obj.TransferredMb);
+                return
+            end
 
             % Create status message. Example: "Downloaded 1 MB/100 MB (1%):
             str = sprintf('%s %d MB/%d MB (%d%%).', action, ...

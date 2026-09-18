@@ -52,35 +52,29 @@ classdef UploadTest < matlab.unittest.TestCase
 
     methods (Test)
         function testSuccessfulStatusReturnsTrue(testCase, successStatus)
-            % A long update interval keeps the monitor from printing.
-            wasSuccess = webprogress.upload(testCase.FilePath, ...
-                testCase.statusUrl(successStatus), ...
-                'DisplayMode', 'Command Window', 'UpdateInterval', 3600);
+            wasSuccess = testCase.uploadQuietly(successStatus);
 
             testCase.verifyTrue(wasSuccess)
         end
 
         function testUnsuccessfulStatusReturnsFalse(testCase, failureStatus)
-            wasSuccess = webprogress.upload(testCase.FilePath, ...
-                testCase.statusUrl(failureStatus), ...
-                'DisplayMode', 'Command Window', 'UpdateInterval', 3600);
+            wasSuccess = testCase.uploadQuietly(failureStatus);
 
             testCase.verifyFalse(wasSuccess)
         end
 
         function testResponseIsReturned(testCase)
-            [~, response] = webprogress.upload(testCase.FilePath, ...
-                testCase.statusUrl(201), ...
-                'DisplayMode', 'Command Window', 'UpdateInterval', 3600);
+            [~, response] = testCase.uploadQuietly(201);
 
             testCase.verifyEqual(response.StatusCode, matlab.net.http.StatusCode.Created)
         end
 
         function testUnsuccessfulStatusErrorsWithoutOutputs(testCase)
-            testCase.verifyError(@() webprogress.upload(testCase.FilePath, ...
-                testCase.statusUrl(403), ...
-                'DisplayMode', 'Command Window', 'UpdateInterval', 3600), ...
-                'webprogress:upload:RequestFailed')
+            % An unsuccessful status only raises an error when the caller
+            % asks for no outputs, so this one cannot go through
+            % uploadQuietly.
+            testCase.verifyError(@() uploadWithoutOutputs(testCase.FilePath, ...
+                testCase.statusUrl(403)), 'webprogress:upload:RequestFailed')
         end
 
         function testCompletionMessageDescribesUpload(testCase)
@@ -109,7 +103,28 @@ classdef UploadTest < matlab.unittest.TestCase
             %statusUrl - Return the server URL that answers with statusCode
             url = sprintf('%s/%d', testCase.ServerUrl, statusCode);
         end
+
+        function [wasSuccess, response] = uploadQuietly(testCase, statusCode)
+            %uploadQuietly - Upload without printing progress
+            %   The monitor displays the first progress it receives
+            %   whatever the update interval, so the output has to be
+            %   captured to keep it out of the Command Window.
+            filePath = testCase.FilePath; %#ok<NASGU> used inside evalc
+            url = testCase.statusUrl(statusCode); %#ok<NASGU> used inside evalc
+            wasSuccess = false;
+            response = matlab.net.http.ResponseMessage.empty;
+            evalc(['[wasSuccess, response] = webprogress.upload(filePath, url, ', ...
+                '''DisplayMode'', ''Command Window'');']);
+        end
     end
+end
+
+function uploadWithoutOutputs(filePath, url) %#ok<INUSD> used inside evalc
+    %uploadWithoutOutputs - Upload asking for no outputs, without printing
+    %   evalc passes the error raised for an unsuccessful status on to the
+    %   caller.
+    evalc(['webprogress.upload(filePath, url, ', ...
+        '''DisplayMode'', ''Command Window'');']);
 end
 
 function output = captureOutput(fcn) %#ok<INUSD> fcn is called inside evalc

@@ -1,4 +1,4 @@
-function strLocalFilename = download(strLocalFilename, strURLFilename, options)
+function savedFilePath = download(targetPath, url, options)
 %download - Download a file from the web and display progress
 %   webprogress.download(FILENAME,URL) downloads the file at URL and
 %   saves it to FILENAME exactly, without adding an extension, and
@@ -53,8 +53,8 @@ function strLocalFilename = download(strLocalFilename, strURLFilename, options)
 %   Written by Eivind Hennestad
 
     arguments
-        strLocalFilename       char         {mustBeNonempty}
-        strURLFilename         char         {mustBeValidUrl}
+        targetPath             char         {mustBeNonempty}
+        url                    char         {mustBeValidUrl}
         options.DisplayMode    char         {mustBeValidDisplay} = 'Dialog Box'
         options.UpdateInterval (1,1) double {mustBePositive}     = 1
         options.ShowFilename   (1,1) logical                     = false
@@ -67,7 +67,7 @@ function strLocalFilename = download(strLocalFilename, strURLFilename, options)
     % service is. Without 'literal' the URI constructor would encode it a
     % second time ("%20" would become "%2520") and the server would
     % reject every name with a space or other encoded character.
-    uri = matlab.net.URI(strURLFilename, 'literal');
+    uri = matlab.net.URI(url, 'literal');
 
     if options.ShowFilename && ~isempty(uri.Path)
         % URI.Path holds the decoded path segments and excludes the query,
@@ -90,11 +90,11 @@ function strLocalFilename = download(strLocalFilename, strURLFilename, options)
         'UseProgressMonitor', true, ...
         'ConnectTimeout', 20);
 
-    isFolderTarget = isfolder(strLocalFilename);
+    isFolderTarget = isfolder(targetPath);
     if isFolderTarget
-        targetFolder = strLocalFilename;
+        targetFolder = targetPath;
     else
-        targetFolder = fileparts(strLocalFilename);
+        targetFolder = fileparts(targetPath);
         if isempty(targetFolder)
             targetFolder = pwd;
         end
@@ -141,7 +141,7 @@ function strLocalFilename = download(strLocalFilename, strURLFilename, options)
                 "file to write instead of a folder.")
         end
     else
-        [~, name, ext] = fileparts(strLocalFilename);
+        [~, name, ext] = fileparts(targetPath);
         targetName = string(name) + string(ext);
     end
 
@@ -158,10 +158,10 @@ function strLocalFilename = download(strLocalFilename, strURLFilename, options)
             "Cannot save the downloaded file as ""%s"": %s", targetFile, moveMessage)
     end
 
-    strLocalFilename = targetFile;
+    savedFilePath = targetFile;
 
     if nargout < 1
-        clear strLocalFilename
+        clear savedFilePath
     end
 end
 

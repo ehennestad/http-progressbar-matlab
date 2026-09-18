@@ -24,13 +24,21 @@ function installFromRelease()
     else
         info = webread('https://api.github.com/repos/ehennestad/MatBox/releases/latest');
         assetNames = {info.assets.name};
-        isMltbx = startsWith(assetNames, 'MatBox');
-    
-        mltbx_URL = info.assets(isMltbx).browser_download_url;
-        
+        isMltbx = startsWith(assetNames, 'MatBox') & endsWith(assetNames, '.mltbx');
+
+        % A release can carry several assets. Take the first toolbox file
+        % instead of indexing with the whole mask, which would expand to a
+        % comma-separated list as soon as more than one asset matches.
+        matchedAssets = info.assets(isMltbx);
+        if isempty(matchedAssets)
+            error('webprogress:tools:MatBoxAssetNotFound', ...
+                ['The latest MatBox release has no .mltbx asset. ', ...
+                'Install MatBox manually or use the "commit" mode.'])
+        end
+
         % Download matbox
-        tempFilePath = websave(tempname, mltbx_URL);
-        cleanupObj = onCleanup(@(fp) delete(tempFilePath));
+        tempFilePath = websave(tempname, matchedAssets(1).browser_download_url);
+        cleanupObj = onCleanup(@() delete(tempFilePath));
         
         % Install toolbox
         matlab.addons.install(tempFilePath);
@@ -42,7 +50,7 @@ function installFromCommit()
     % Download latest zipped version of repo
     url = "https://github.com/ehennestad/MatBox/archive/refs/heads/main.zip";
     tempFilePath = websave(tempname, url);
-    cleanupObj = onCleanup(@(fp) delete(tempFilePath));
+    cleanupObj = onCleanup(@() delete(tempFilePath));
     
     % Unzip in temporary location
     unzippedFiles = unzip(tempFilePath, tempdir);

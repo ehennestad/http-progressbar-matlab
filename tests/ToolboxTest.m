@@ -1,6 +1,13 @@
-classdef ToolboxTest <  matlab.unittest.TestCase
+classdef ToolboxTest < matlab.unittest.TestCase
 % ToolboxTest - Unit test for testing the toolbox functions.
 
+    methods (TestClassSetup)
+        function addSourceToPath(testCase)
+            sourceFolder = fullfile(fileparts(fileparts(mfilename('fullpath'))), ...
+                'src', 'webprogress');
+            testCase.applyFixture(matlab.unittest.fixtures.PathFixture(sourceFolder));
+        end
+    end
 
     methods (Test)
         function testToolboxDir(testCase)
@@ -12,7 +19,10 @@ classdef ToolboxTest <  matlab.unittest.TestCase
         function testToolboxVersion(testCase)
             versionStr = webprogress.toolboxversion();
             testCase.verifyClass(versionStr, 'char')
-            testCase.verifyTrue(startsWith(versionStr, 'Version'))
+
+            % The version is the number alone, in major.minor.patch form
+            % with an optional sub-patch number.
+            testCase.verifyMatches(versionStr, '^\d+\.\d+\.\d+(\.\d+)?$')
         end
     end
 end

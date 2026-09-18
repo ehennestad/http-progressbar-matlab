@@ -36,12 +36,25 @@ classdef ProgressDisplayTest < matlab.unittest.TestCase
     end
 
     methods (Test)
-        function testShortDownloadShowsProgress(testCase)
-            % The monitor shows nothing until the HTTP stack first calls
-            % it, and the stack waits ProgressMonitor.Interval before that
-            % first call. A download from the local server finishes in well
-            % under a second, so it reports no progress at all unless the
-            % monitor lowers Interval to the requested UpdateInterval.
+        function testShortDownloadShowsProgressAtDefaultInterval(testCase)
+            % A download from the local server finishes in well under one
+            % second, which is the default UpdateInterval. Two things have
+            % to hold for it to report anything: the HTTP stack has to call
+            % the monitor at all, which it only does when the monitor caps
+            % ProgressMonitor.Interval well below the transfer time, and
+            % the monitor has to display the first progress it receives
+            % rather than waiting out an update interval first.
+            target = fullfile(testCase.Folder, 'data.txt');
+
+            output = captureOutput(@() webprogress.download(target, ...
+                testCase.ServerUrl + "/files/data.txt", ...
+                'DisplayMode', 'Command Window'));
+
+            testCase.verifySubstring(output, 'Downloaded')
+            testCase.verifySubstring(output, 'Completed in')
+        end
+
+        function testShortDownloadShowsProgressAtShortInterval(testCase)
             target = fullfile(testCase.Folder, 'data.txt');
 
             output = captureOutput(@() webprogress.download(target, ...

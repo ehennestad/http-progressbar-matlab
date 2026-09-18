@@ -16,10 +16,12 @@ classdef FileTransferProgressMonitorTest < matlab.unittest.TestCase
             'minutes', struct('Value', minutes(5), 'Expected', '5 minutes'), ...
             'hours', struct('Value', hours(2), 'Expected', '2 hours'));
 
+        % 0.01 is the cap the monitor puts on ProgressMonitor.Interval.
         intervalCase = struct( ...
-            'subSecond', struct('UpdateInterval', 0.25, 'Expected', 0.25), ...
-            'oneSecond', struct('UpdateInterval', 1, 'Expected', 1), ...
-            'longerThanOneSecond', struct('UpdateInterval', 3600, 'Expected', 1));
+            'belowTheCap', struct('UpdateInterval', 0.002, 'Expected', 0.002), ...
+            'subSecond', struct('UpdateInterval', 0.25, 'Expected', 0.01), ...
+            'oneSecond', struct('UpdateInterval', 1, 'Expected', 0.01), ...
+            'longerThanOneSecond', struct('UpdateInterval', 3600, 'Expected', 0.01));
 
         estimateCase = struct( ...
             'notMovedYet', struct('ElapsedSeconds', 60, 'PercentTransferred', 0, ...
@@ -57,15 +59,44 @@ classdef FileTransferProgressMonitorTest < matlab.unittest.TestCase
             testCase.verifyEqual(monitor.FileSizeBytes, 1000)
         end
 
-        function testIntervalFollowsUpdateInterval(testCase, intervalCase)
+        function testIntervalIsCappedBelowUpdateInterval(testCase, intervalCase)
             % Interval is the delay before the HTTP stack first calls the
-            % monitor. A sub-second UpdateInterval only reaches the display
-            % when Interval comes down with it, and a transfer shorter than
-            % Interval shows no progress at all.
+            % monitor, and the stack skips that call when the transfer
+            % finishes first. It therefore has to stay well below
+            % UpdateInterval, which only throttles the display.
             monitor = webprogress.FileTransferProgressMonitor( ...
                 'UpdateInterval', intervalCase.UpdateInterval);
 
             testCase.verifyEqual(monitor.Interval, intervalCase.Expected)
+        end
+
+        function testFirstProgressIsShownBeforeUpdateInterval(testCase)
+            % A transfer that finishes within one UpdateInterval must
+            % still report its progress, so the first update does not wait
+            % for the interval to pass.
+            monitor = webprogress.FileTransferProgressMonitor( ...
+                'DisplayMode', 'Command Window', 'UpdateInterval', 3600, ...
+                'Filename', 'data.bin', 'FileSizeBytes', testCase.FileSizeBytes);
+            monitor.Direction = matlab.net.http.MessageType.Response;
+
+            output = captureOutput(@() setValues(monitor, 5 * 2^20));
+
+            testCase.verifySubstring(output, 'Downloading data.bin')
+            testCase.verifySubstring(output, 'Downloaded 5 MB/10 MB (50%)')
+        end
+
+        function testLaterProgressWaitsForUpdateInterval(testCase)
+            % Only the first update bypasses UpdateInterval. The ones that
+            % follow are throttled, so a long interval keeps them quiet.
+            monitor = webprogress.FileTransferProgressMonitor( ...
+                'DisplayMode', 'Command Window', 'UpdateInterval', 3600, ...
+                'FileSizeBytes', testCase.FileSizeBytes);
+            monitor.Direction = matlab.net.http.MessageType.Response;
+            captureOutput(@() setValues(monitor, 2 * 2^20));
+
+            output = captureOutput(@() setValues(monitor, [5, 9] * 2^20));
+
+            testCase.verifyEmpty(output)
         end
 
         function testUnknownOptionErrors(testCase, unknownOptionName)
@@ -97,13 +128,14 @@ classdef FileTransferProgressMonitorTest < matlab.unittest.TestCase
         end
 
         function testPercentTransferredUsesFileSizeBytes(testCase)
-            % A long update interval keeps the monitor from printing.
             monitor = webprogress.FileTransferProgressMonitor( ...
                 'DisplayMode', 'Command Window', 'UpdateInterval', 3600, ...
                 'FileSizeBytes', 1000);
             monitor.Direction = matlab.net.http.MessageType.Response;
 
-            setValues(monitor, 250)
+            % The monitor displays the first progress it receives whatever
+            % the update interval, so capture it rather than print it.
+            captureOutput(@() setValues(monitor, 250));
 
             testCase.verifyEqual(monitor.PercentTransferred, 25, 'AbsTol', 1e-12)
         end
@@ -128,6 +160,21 @@ classdef FileTransferProgressMonitorTest < matlab.unittest.TestCase
             output = captureOutput(@() setValues(monitor, 2 * 2^20));
 
             testCase.verifySubstring(output, 'Downloading my data file.json')
+        end
+
+        function testUnknownSizeIsNotReportedAsNaN(testCase)
+            % Neither the message nor the caller reports a size here, so
+            % the total and the percentage are both unknown.
+            monitor = webprogress.FileTransferProgressMonitor( ...
+                'DisplayMode', 'Command Window', 'UpdateInterval', 0);
+            monitor.Direction = matlab.net.http.MessageType.Response;
+            captureOutput(@() setValues(monitor, 3 * 2^20));
+
+            output = captureOutput(@() monitor.done());
+
+            testCase.verifySubstring(output, 'Downloaded 3 MB. Completed in')
+            testCase.verifyThat(output, ...
+                ~matlab.unittest.constraints.ContainsSubstring('NaN'))
         end
 
         function testDonePrintsCompletionMessage(testCase)
@@ -179,7 +226,41 @@ classdef FileTransferProgressMonitorTest < matlab.unittest.TestCase
 
             testCase.verifyWarningFree(@() setValues(monitor, [500, 2500]))
         end
+
+        function testCancelKeepsTheWaitbarClosed(testCase)
+            % The HTTP stack keeps reporting byte counts for a while after
+            % a cancellation, because it aborts the transfer at its next
+            % opportunity rather than at once. None of those reports may
+            % reopen the waitbar the user has just dismissed.
+            testCase.assumeNotEqual(getenv('GITHUB_ACTIONS'), 'true', ...
+                'Figures cannot be created on GitHub Actions runners.')
+            delete(findWaitbars())
+            testCase.addTeardown(@() delete(findWaitbars()))
+            monitor = webprogress.FileTransferProgressMonitor( ...
+                'FileSizeBytes', 1000, 'UpdateInterval', 0);
+            testCase.addTeardown(@() delete(monitor))
+            monitor.Direction = matlab.net.http.MessageType.Response;
+            setValues(monitor, 100)
+            testCase.assumeNumElements(findWaitbars(), 1)
+
+            pressCancel(findWaitbars())
+            setValues(monitor, [200, 300])
+
+            testCase.verifyEmpty(findWaitbars())
+        end
     end
+end
+
+function bars = findWaitbars()
+    %findWaitbars - Return the open waitbar figures
+    bars = findall(0, 'Type', 'figure', 'Tag', 'TMWWaitbar');
+end
+
+function pressCancel(waitbarFigure)
+    %pressCancel - Press the waitbar's Cancel button as a user would
+    button = findall(waitbarFigure, 'Style', 'pushbutton');
+    callback = button(1).Callback;
+    callback(button(1), [])
 end
 
 function monitor = createCommandWindowMonitor(fileSizeBytes, filename)
