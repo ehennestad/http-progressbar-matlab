@@ -3,8 +3,10 @@
 A PUT or POST request to /<code> receives HTTP status <code> with an empty
 body. A GET request to /<code> receives status <code> with an HTML error
 page. A GET request to /files/<name> receives status 200 with a text/plain
-body. Its query can set the body with content=<text> and add a
-Content-Disposition header with filename=<name>.
+body. Its query can set the body with content=<text>, add a
+Content-Disposition header with filename=<name>, and keep the transfer in
+progress for at least delay=<seconds> by pausing after the first byte of
+the body.
 
 The server binds a free port on 127.0.0.1 and writes the port number to
 the file given as the first command-line argument.
@@ -13,6 +15,7 @@ import http.server
 import os
 import signal
 import sys
+import time
 from urllib.parse import parse_qs, unquote, urlsplit
 
 # MATLAB runs system commands with SIGTERM blocked, and a child process
@@ -61,7 +64,17 @@ class StatusHandler(http.server.BaseHTTPRequestHandler):
             self.send_header("Content-Disposition",
                              f'attachment; filename="{query["filename"][0]}"')
         self.end_headers()
-        self.wfile.write(body)
+
+        delay = float(query.get("delay", ["0"])[0])
+        if delay > 0:
+            # The pause comes after the first byte, so that it is part of
+            # the body transfer whichever point the client times it from.
+            self.wfile.write(body[:1])
+            self.wfile.flush()
+            time.sleep(delay)
+            self.wfile.write(body[1:])
+        else:
+            self.wfile.write(body)
 
     def log_message(self, *args):
         pass
