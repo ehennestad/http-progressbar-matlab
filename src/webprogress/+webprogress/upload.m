@@ -26,6 +26,11 @@ function [wasSuccess, response] = upload(filePath, url, options)
 %   FILENAME in the progress title when SHOW is true. The default is
 %   false.
 %
+%   [...] = webprogress.upload(...,Filename=NAME) shows NAME in the
+%   progress title, whether SHOW is true or false. Use it when the file is
+%   stored under another name than the local file has. The default is '',
+%   which leaves the title to ShowFilename.
+%
 %   [...] = webprogress.upload(...,IndentSize=N) indents progress printed
 %   in the Command Window by N spaces. The default is 0.
 %
@@ -47,12 +52,15 @@ function [wasSuccess, response] = upload(filePath, url, options)
         options.DisplayMode    char         {mustBeValidDisplay} = 'Dialog Box'
         options.UpdateInterval (1,1) double {mustBePositive}     = 1
         options.ShowFilename   (1,1) logical                     = false
+        options.Filename       (1,:) char                        = ''
         options.IndentSize     (1,1) uint8                       = 0
         options.Figure         {mustBeFigureOrEmpty}             = []
         options.RequestMessage matlab.net.http.RequestMessage    = matlab.net.http.RequestMessage.empty
     end
 
-    if options.ShowFilename
+    if ~isempty(options.Filename)
+        filename = options.Filename;
+    elseif options.ShowFilename
         % Show the name of the local file. The URL is an upload endpoint
         % and its last segment need not match the file.
         [~, filename, ext] = fileparts(filePath);

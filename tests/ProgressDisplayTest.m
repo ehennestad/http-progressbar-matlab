@@ -37,13 +37,13 @@ classdef ProgressDisplayTest < matlab.unittest.TestCase
 
     methods (Test)
         function testShortDownloadShowsProgressAtDefaultInterval(testCase)
-            % A download from the local server finishes in well under one
-            % second, which is the default UpdateInterval. Two things have
-            % to hold for it to report anything: the HTTP stack has to call
-            % the monitor at all, which it only does when the monitor caps
-            % ProgressMonitor.Interval well below the transfer time, and
-            % the monitor has to display the first progress it receives
-            % rather than waiting out an update interval first.
+        % A download from the local server finishes in well under one
+        % second, which is the default UpdateInterval. Two things have
+        % to hold for it to report anything: the HTTP stack has to call
+        % the monitor at all, which it only does when the monitor caps
+        % ProgressMonitor.Interval well below the transfer time, and
+        % the monitor has to display the first progress it receives
+        % rather than waiting out an update interval first.
             target = fullfile(testCase.Folder, 'data.txt');
 
             output = captureOutput(@() webprogress.download(target, ...
@@ -63,6 +63,44 @@ classdef ProgressDisplayTest < matlab.unittest.TestCase
 
             testCase.verifySubstring(output, 'Downloaded')
             testCase.verifySubstring(output, 'Completed in')
+        end
+
+        function testDownloadTitleShowsGivenFilename(testCase)
+            target = fullfile(testCase.Folder, 'saved.txt');
+
+            output = captureOutput(@() webprogress.download(target, ...
+                testCase.slowFileUrl('data.txt'), ...
+                'DisplayMode', 'Command Window', ...
+                'Filename', 'folder/object.json'));
+
+            testCase.verifySubstring(output, 'Downloading folder/object.json')
+        end
+
+        function testGivenFilenameReplacesNameFromUrl(testCase)
+            import matlab.unittest.constraints.ContainsSubstring
+            target = fullfile(testCase.Folder, 'saved.txt');
+
+            output = captureOutput(@() webprogress.download(target, ...
+                testCase.slowFileUrl('data.txt'), ...
+                'DisplayMode', 'Command Window', ...
+                'ShowFilename', true, 'Filename', 'object.json'));
+
+            testCase.verifySubstring(output, 'Downloading object.json')
+            testCase.verifyThat(output, ~ContainsSubstring('data.txt'))
+        end
+    end
+
+    methods (Access = private)
+        function url = slowFileUrl(testCase, name)
+        %slowFileUrl - Return the URL of a served file with a delayed body
+        %   The HTTP stack calls a progress monitor only while a
+        %   transfer is in progress, first after the 0.01 seconds that
+        %   the monitor sets as ProgressMonitor.Interval. A test that
+        %   reads the progress title needs that call, so the server
+        %   holds the body back for much longer than that.
+            bodyDelaySeconds = 0.2;
+            url = sprintf("%s/files/%s?delay=%g", ...
+                testCase.ServerUrl, name, bodyDelaySeconds);
         end
     end
 end

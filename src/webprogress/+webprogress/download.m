@@ -29,6 +29,11 @@ function savedFilePath = download(targetPath, url, options)
 %   name from URL in the progress title when SHOW is true. The default
 %   is false.
 %
+%   [...] = webprogress.download(...,Filename=NAME) shows NAME in the
+%   progress title, whether SHOW is true or false. Use it when the last
+%   segment of URL is not the name to show, for example an identifier.
+%   The default is '', which leaves the title to ShowFilename.
+%
 %   [...] = webprogress.download(...,IndentSize=N) indents progress
 %   printed in the Command Window by N spaces. The default is 0.
 %
@@ -58,6 +63,7 @@ function savedFilePath = download(targetPath, url, options)
         options.DisplayMode    char         {mustBeValidDisplay} = 'Dialog Box'
         options.UpdateInterval (1,1) double {mustBePositive}     = 1
         options.ShowFilename   (1,1) logical                     = false
+        options.Filename       (1,:) char                        = ''
         options.IndentSize     (1,1) uint8                       = 0
         options.Figure         {mustBeFigureOrEmpty}             = []
         options.FileSizeBytes  (1,1) double                      = nan
@@ -69,7 +75,9 @@ function savedFilePath = download(targetPath, url, options)
     % reject every name with a space or other encoded character.
     uri = matlab.net.URI(url, 'literal');
 
-    if options.ShowFilename && ~isempty(uri.Path)
+    if ~isempty(options.Filename)
+        filename = options.Filename;
+    elseif options.ShowFilename && ~isempty(uri.Path)
         % URI.Path holds the decoded path segments and excludes the query,
         % which for a signed URL carries the signature.
         filename = char(uri.Path(end));
