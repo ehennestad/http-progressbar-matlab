@@ -144,12 +144,24 @@ classdef DownloadTargetTest < matlab.unittest.TestCase
         end
 
         function testConflictingContentLengthsError(testCase)
-            % The server sends the 5-byte body with the lengths 5 and 3
+            % The server sends the 5-byte body with the lengths 5 and 3.
+            % libcurl 8.17 and later reject such a response, so an HTTP
+            % client built on it raises its own error before download
+            % compares the lengths. Either error leaves no file.
+            import matlab.unittest.constraints.IsEqualTo
+
             target = fullfile(testCase.Folder, 'data.txt');
             url = testCase.fileUrl('data.txt', 'content', 'hello', 'extra_length', '3');
 
-            testCase.verifyError(@() downloadQuietly(target, url), ...
-                'webprogress:download:InvalidContentLength')
+            errorId = "";
+            try
+                downloadQuietly(target, url);
+            catch exception
+                errorId = string(exception.identifier);
+            end
+            testCase.verifyThat(errorId, ...
+                IsEqualTo("webprogress:download:InvalidContentLength") | ...
+                IsEqualTo("MATLAB:webservices:CopyContentToDataStreamError"))
 
             testCase.verifyEmpty(listFiles(testCase.Folder))
         end
