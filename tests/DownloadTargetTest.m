@@ -110,6 +110,50 @@ classdef DownloadTargetTest < matlab.unittest.TestCase
             testCase.verifyEmpty(fileread(target))
         end
 
+        function testTruncatedDownloadErrorsAndLeavesNoFile(testCase)
+            % The server announces 50 bytes and closes the connection after 20
+            target = fullfile(testCase.Folder, 'data.txt');
+            url = testCase.fileUrl('data.txt', 'content', repmat('x', 1, 50), 'truncate', '20');
+
+            testCase.verifyError(@() downloadQuietly(target, url), ...
+                'webprogress:download:IncompleteTransfer')
+
+            testCase.verifyEmpty(listFiles(testCase.Folder))
+        end
+
+        function testTruncatedDownloadKeepsExistingFile(testCase)
+            target = fullfile(testCase.Folder, 'data.txt');
+            writeText(target, 'old')
+            url = testCase.fileUrl('data.txt', 'content', repmat('x', 1, 50), 'truncate', '20');
+
+            testCase.verifyError(@() downloadQuietly(target, url), ...
+                'webprogress:download:IncompleteTransfer')
+
+            testCase.verifyEqual(fileread(target), 'old')
+            testCase.verifyEqual(listFiles(testCase.Folder), "data.txt")
+        end
+
+        function testConnectionClosedBeforeBodyErrors(testCase)
+            target = fullfile(testCase.Folder, 'data.txt');
+            url = testCase.fileUrl('data.txt', 'content', repmat('x', 1, 50), 'truncate', '0');
+
+            testCase.verifyError(@() downloadQuietly(target, url), ...
+                'webprogress:download:IncompleteTransfer')
+
+            testCase.verifyEmpty(listFiles(testCase.Folder))
+        end
+
+        function testConflictingContentLengthsError(testCase)
+            % The server sends the 5-byte body with the lengths 5 and 3
+            target = fullfile(testCase.Folder, 'data.txt');
+            url = testCase.fileUrl('data.txt', 'content', 'hello', 'extra_length', '3');
+
+            testCase.verifyError(@() downloadQuietly(target, url), ...
+                'webprogress:download:InvalidContentLength')
+
+            testCase.verifyEmpty(listFiles(testCase.Folder))
+        end
+
         function testRelativeTargetReturnsFullPath(testCase)
             testCase.applyFixture( ...
                 matlab.unittest.fixtures.CurrentFolderFixture(testCase.Folder));

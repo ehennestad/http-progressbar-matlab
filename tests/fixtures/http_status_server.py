@@ -4,9 +4,11 @@ A PUT or POST request to /<code> receives HTTP status <code> with an empty
 body. A GET request to /<code> receives status <code> with an HTML error
 page. A GET request to /files/<name> receives status 200 with a text/plain
 body. Its query can set the body with content=<text>, add a
-Content-Disposition header with filename=<name>, and keep the transfer in
+Content-Disposition header with filename=<name>, keep the transfer in
 progress for at least delay=<seconds> by pausing after the first byte of
-the body.
+the body, close the connection after truncate=<bytes> bytes of the body
+while Content-Length still announces the whole body, and send a second
+Content-Length header with the value extra_length=<bytes>.
 
 The server binds a free port on 127.0.0.1 and writes the port number to
 the file given as the first command-line argument.
@@ -60,10 +62,20 @@ class StatusHandler(http.server.BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
+        if "extra_length" in query:
+            self.send_header("Content-Length", query["extra_length"][0])
         if "filename" in query:
             self.send_header("Content-Disposition",
                              f'attachment; filename="{query["filename"][0]}"')
         self.end_headers()
+
+        if "truncate" in query:
+            # A connection that closes before the announced length, as a
+            # dropped network connection does.
+            self.wfile.write(body[:int(query["truncate"][0])])
+            self.wfile.flush()
+            self.close_connection = True
+            return
 
         delay = float(query.get("delay", ["0"])[0])
         if delay > 0:

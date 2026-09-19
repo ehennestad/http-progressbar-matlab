@@ -45,7 +45,11 @@ function savedFilePath = download(targetPath, url, options)
 %   size in bytes to use for progress when the server does not report it.
 %
 %   webprogress.download raises an error if the server responds with a
-%   status that is not a successful 2xx status.
+%   status that is not a successful 2xx status, if the connection closes
+%   before the number of bytes the server announced in its
+%   Content-Length header has arrived, or if the server announces
+%   different lengths in several Content-Length headers. In each case no
+%   file is saved.
 %
 %   Example: Download a file and print progress in the Command Window
 %       url = "https://allen-brain-observatory.s3.us-west-2" + ...
@@ -140,6 +144,8 @@ function savedFilePath = download(targetPath, url, options)
             string(resp.StatusLine))
     end
 
+    assertCompleteTransfer(resp, temporaryFile)
+
     if isFolderTarget
         targetName = getRemoteFilename(resp, uri);
         if strlength(targetName) == 0
@@ -170,6 +176,50 @@ function savedFilePath = download(targetPath, url, options)
 
     if nargout < 1
         clear savedFilePath
+    end
+end
+
+function assertCompleteTransfer(response, filePath)
+    %assertCompleteTransfer - Raise an error if the body is shorter than announced
+    %   The HTTP client ends a transfer without an error when the server
+    %   closes the connection early, so a dropped connection would save a
+    %   truncated file. The size of the received file is compared with the
+    %   Content-Length of the response. Without that header, as for a
+    %   chunked response, there is nothing to compare with. A body with a
+    %   Content-Encoding such as gzip is decoded while it is saved, so its
+    %   saved size differs from Content-Length and is not compared.
+    %
+    %   A response with several Content-Length headers of different values
+    %   is invalid (RFC 9110, section 8.6), and the length of its body
+    %   cannot be known, so it is an error. Repeated headers with the same
+    %   value count as one.
+    lengthFields = response.getFields("Content-Length");
+    if isempty(lengthFields)
+        return
+    end
+    declaredBytes = unique(lengthFields.convert());
+    if ~isscalar(declaredBytes)
+        error("webprogress:download:InvalidContentLength", ...
+            "The server gave %d different lengths for the file (%s bytes), so the " + ...
+            "download cannot be checked and the file was not saved. Try the download again.", ...
+            numel(declaredBytes), strjoin(string(declaredBytes), ", "))
+    end
+
+    encodingField = response.getFields("Content-Encoding");
+    if ~isempty(encodingField) && ~strcmpi(strtrim(string(encodingField(end).Value)), "identity")
+        return
+    end
+
+    receivedBytes = 0;
+    if isfile(filePath)
+        fileInfo = dir(filePath);
+        receivedBytes = fileInfo.bytes;
+    end
+    if receivedBytes ~= declaredBytes
+        error("webprogress:download:IncompleteTransfer", ...
+            "The download stopped after %d of %d bytes, so the file was not saved. " + ...
+            "Download it again. If it stops again, check the network connection.", ...
+            receivedBytes, declaredBytes)
     end
 end
 
