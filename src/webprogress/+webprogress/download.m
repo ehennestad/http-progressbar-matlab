@@ -187,7 +187,11 @@ function assertCompleteTransfer(response, filePath)
     %   Content-Length of the response. Without that header, as for a
     %   chunked response, there is nothing to compare with. A body with a
     %   Content-Encoding such as gzip is decoded while it is saved, so its
-    %   saved size differs from Content-Length and is not compared.
+    %   saved size differs from Content-Length and is not compared. The
+    %   coding "identity" means a body that was not transformed, so its
+    %   sizes do match. RFC 9110 reserves that token for Accept-Encoding
+    %   and RFC 2616 defined it as a content coding, which is why a server
+    %   may still send it in Content-Encoding.
     %
     %   A response with several Content-Length headers of different values
     %   is invalid (RFC 9110, section 8.6), and the length of its body
