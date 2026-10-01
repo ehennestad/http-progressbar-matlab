@@ -18,6 +18,8 @@ function [wasSuccess, response] = upload(filePath, url, options)
 %   progress is shown. MODE must be:
 %       "Dialog Box"     - (default) Shows progress in a dialog box.
 %       "Command Window" - Prints progress in the Command Window.
+%       "None"           - Shows nothing. Use it with ProgressFcn to show
+%                          progress in a display of your own.
 %
 %   [...] = webprogress.upload(...,UpdateInterval=SECONDS) specifies the
 %   minimum number of seconds between progress updates. The default is 1.
@@ -53,12 +55,23 @@ function [wasSuccess, response] = upload(filePath, url, options)
 %   RequestMessage. Use Offset and NumBytes to send one part of a file
 %   that a storage service receives in several requests.
 %
+%   [...] = webprogress.upload(...,ProgressFcn=FCN) calls FCN with the
+%   progress of the upload, at most once per UpdateInterval and once more
+%   when it is done. FCN receives a struct with the fields ActionName
+%   ("Upload"), TransferredBytes and TotalBytes.
+%
+%   [...] = webprogress.upload(...,CancelRequestedFcn=FCN) calls FCN
+%   before the upload and at most once per UpdateInterval while it runs.
+%   When FCN returns true, the upload stops and webprogress.upload raises
+%   the error webprogress:upload:Cancelled, also when it has outputs.
+%
 %   [...] = webprogress.upload(...,ProgressMonitor=MONITOR) shows
 %   progress in MONITOR, a webprogress.MultipartProgressMonitor, which
 %   stays open after the upload. Pass the same monitor to the upload of
 %   each part of a file to show the progress of the whole file. A part
 %   that the server accepts is added to MONITOR.CompletedBytes. The
-%   display options of webprogress.upload are then ignored. If the user
+%   display options of webprogress.upload, ProgressFcn and
+%   CancelRequestedFcn among them, are then ignored. If the user
 %   cancelled MONITOR, webprogress.upload raises an error instead of
 %   sending the part.
 %
@@ -81,6 +94,8 @@ function [wasSuccess, response] = upload(filePath, url, options)
         options.NumBytes       (1,1) double {mustBePositive, mustBeIntegerOrInf} = Inf
         options.ProgressMonitor webprogress.MultipartProgressMonitor ...
                                                                  = webprogress.MultipartProgressMonitor.empty
+        options.ProgressFcn    {mustBeFunctionHandleOrEmpty}     = []
+        options.CancelRequestedFcn {mustBeFunctionHandleOrEmpty} = []
     end
 
     if ~isempty(options.Filename)
@@ -99,10 +114,14 @@ function [wasSuccess, response] = upload(filePath, url, options)
         'UpdateInterval', options.UpdateInterval, ...
         'Filename', filename, ...
         'IndentSize', options.IndentSize, ...
-        'Figure', options.Figure };
+        'Figure', options.Figure, ...
+        'ProgressFcn', options.ProgressFcn, ...
+        'CancelRequestedFcn', options.CancelRequestedFcn };
     
     monitor = options.ProgressMonitor;
     if isempty(monitor)
+        isCancelRequested = options.CancelRequestedFcn;
+        raiseIfCancelled(isCancelRequested)
         progressMonitorFcn = @(varargin) webprogress.FileTransferProgressMonitor(monitorOpts{:});
     else
         if monitor.IsCancelled
@@ -113,6 +132,7 @@ function [wasSuccess, response] = upload(filePath, url, options)
         % The HTTP stack calls the function for each request, so every
         % part reports to the same monitor.
         progressMonitorFcn = @(varargin) monitor;
+        isCancelRequested = [];
     end
 
     webOpts = matlab.net.http.HTTPOptions(...
@@ -160,7 +180,13 @@ function [wasSuccess, response] = upload(filePath, url, options)
     % reject every name with a space or other encoded character.
     uri = matlab.net.URI(url, 'literal');
     
-    [response, ~, ~] = req.send(uri, webOpts);
+    try
+        [response, ~, ~] = req.send(uri, webOpts);
+    catch exception
+        raiseIfCancelled(isCancelRequested)
+        rethrow(exception)
+    end
+    raiseIfCancelled(isCancelRequested)
     
     % Servers acknowledge an upload with any 2xx status, for example
     % 201 Created or 204 No Content, not only 200 OK.
@@ -182,6 +208,14 @@ function [wasSuccess, response] = upload(filePath, url, options)
 
     if nargout < 2
         clear response
+    end
+end
+
+function raiseIfCancelled(isCancelRequested)
+    %raiseIfCancelled - Raise an error if CancelRequestedFcn asks to stop
+    if ~isempty(isCancelRequested) && isCancelRequested()
+        error("webprogress:upload:Cancelled", ...
+            "The upload was cancelled.")
     end
 end
 
