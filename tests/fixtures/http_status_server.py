@@ -3,18 +3,32 @@
 A PUT or POST request to /<code> receives HTTP status <code> with an empty
 body. A GET request to /<code> receives status <code> with an HTML error
 page. A GET request to /files/<name> receives status 200 with a text/plain
-body. Its query can set the body with content=<text>, add a
+body. Its query can set the body with content=<text>, or with
+size=<bytes> to a body of that many bytes that repeat the values 0 to
+250, add a
 Content-Disposition header with filename=<name>, keep the transfer in
 progress for at least delay=<seconds> by pausing after the first byte of
 the body, close the connection after truncate=<bytes> bytes of the body
 while Content-Length still announces the whole body, and send a second
 Content-Length header with the value extra_length=<bytes>.
 
+A file response carries a strong ETag made from the body. The query can
+set its opaque part with etag=<text>, make it weak with weak=1, or replace
+it with last_modified=<HTTP-date>, which is sent as Last-Modified. A
+request with "Range: bytes=<first>-" receives status 206 with the bytes
+from first onward, or status 416 when first is at or past the end of the
+body. With If-Range, the range is honoured only when If-Range equals the
+validator of the response, and status 200 with the whole body is sent
+otherwise. ignore_range=1 makes the server ignore Range and send status
+200. truncate and delay apply to the bytes sent.
+
 The server binds a free port on 127.0.0.1 and writes the port number to
 the file given as the first command-line argument.
 """
+import hashlib
 import http.server
 import os
+import re
 import signal
 import sys
 import time
@@ -53,15 +67,25 @@ class StatusHandler(http.server.BaseHTTPRequestHandler):
             code = 200
             content_type = "text/plain; charset=utf-8"
             name = unquote("/".join(segments[1:]))
-            body = query.get("content", [f"Content of {name}"])[0].encode()
+            if "size" in query:
+                size = int(query["size"][0])
+                body = (bytes(range(251)) * (size // 251 + 1))[:size]
+            else:
+                body = query.get("content", [f"Content of {name}"])[0].encode()
         else:
             code = 404
             content_type = "text/plain"
             body = b"Not found"
 
+        headers = []
+        if segments[0] == "files":
+            code, body, headers = self._select_range(body, query)
+
         self.send_response(code)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
+        for header in headers:
+            self.send_header(*header)
         if "extra_length" in query:
             self.send_header("Content-Length", query["extra_length"][0])
         if "filename" in query:
@@ -87,6 +111,33 @@ class StatusHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(body[1:])
         else:
             self.wfile.write(body)
+
+    def _select_range(self, body, query):
+        """Return the status, body and extra headers for a file request."""
+        if "last_modified" in query:
+            validator = query["last_modified"][0]
+            headers = [("Last-Modified", validator)]
+        else:
+            opaque = query.get("etag", [hashlib.md5(body).hexdigest()])[0]
+            validator = f'"{opaque}"'
+            if query.get("weak", ["0"])[0] == "1":
+                validator = "W/" + validator
+            headers = [("ETag", validator)]
+        headers.append(("Accept-Ranges", "bytes"))
+
+        match = re.fullmatch(r"bytes=(\d+)-", self.headers.get("Range", ""))
+        if_range = self.headers.get("If-Range")
+        if (match is None or query.get("ignore_range", ["0"])[0] == "1"
+                or (if_range is not None and if_range != validator)):
+            return 200, body, headers
+
+        first = int(match.group(1))
+        if first >= len(body):
+            headers.append(("Content-Range", f"bytes */{len(body)}"))
+            return 416, b"", headers
+        headers.append(("Content-Range",
+                        f"bytes {first}-{len(body) - 1}/{len(body)}"))
+        return 206, body[first:], headers
 
     def log_message(self, *args):
         pass
