@@ -48,12 +48,15 @@ function savedFilePath = download(targetPath, url, options)
 %   received so far when the download fails or is interrupted, and
 %   continues from it on a later call when TF is true. The default is
 %   false. FILENAME must be a file path, not a folder. The part is kept
-%   in FILENAME + ".part", and the version of the file it belongs to in
-%   FILENAME + ".part.json". A later call with Resume=true asks the server
-%   for the rest of that version only, so URL may differ between calls,
-%   as a presigned URL does. If the file has changed on the server, or
-%   the server cannot send part of a file, the download starts from the
-%   beginning. Both files are deleted after a successful download.
+%   in FILENAME + ".part", and the ETag and length of the file it belongs
+%   to in FILENAME + ".part.json". A later call with Resume=true asks the
+%   server for the rest of that file only, so URL may differ between
+%   calls, as a presigned URL does. If the file has changed on the
+%   server, or the server cannot send part of a file, the download starts
+%   from the beginning. The same happens when the server gives the file
+%   no ETag or a weak one. Both files are deleted after a successful
+%   download. Two MATLAB sessions that download to the same FILENAME
+%   with Resume=true write the same partial file and corrupt it.
 %
 %   webprogress.download raises an error if the server responds with a
 %   status that is not a successful 2xx status, if the connection closes
@@ -225,36 +228,48 @@ end
 function receiveResumable(uri, partialFile, stateFile, monitorOpts)
     %receiveResumable - Receive a file into a partial file that survives failures
     %   The request asks for the bytes after those in partialFile when
-    %   stateFile holds a strong validator of the file they came from.
-    %   If-Range makes the server send the whole file with status 200
-    %   instead when that validator no longer matches (RFC 9110, section
-    %   13.1.5). The response status decides whether the consumer appends
-    %   to or replaces the partial file, and any status other than 200 or
-    %   206 leaves both files unchanged.
-    validator = readValidator(stateFile);
+    %   stateFile holds the strong entity tag of the file they came from.
+    %   The consumer checks that a 206 response continues that file,
+    %   because a server may ignore If-Range and send a range of a
+    %   changed file. When it does not, or the range cannot be satisfied
+    %   because the partial file is longer than the file on the server,
+    %   both files are deleted and the download starts from the
+    %   beginning with a second request. Any status other than 200, 206
+    %   or 416 leaves both files unchanged.
+    [entityTag, totalBytes] = readState(stateFile);
     offset = 0;
-    if strlength(validator) > 0 && isfile(partialFile)
+    if strlength(entityTag) > 0 && isfile(partialFile)
         fileInfo = dir(partialFile);
         offset = fileInfo.bytes;
     end
 
-    [response, consumer] = sendResumableRequest(uri, partialFile, stateFile, ...
-        offset, validator, monitorOpts);
+    isRestartRequired = false;
+    try
+        [response, consumer] = sendResumableRequest(uri, partialFile, stateFile, ...
+            offset, entityTag, totalBytes, monitorOpts);
+    catch exception
+        if exception.identifier ~= "webprogress:download:RestartRequired"
+            rethrow(exception)
+        end
+        isRestartRequired = true;
+    end
 
-    % 416 answers a range that starts at or past the end of the file, and
-    % its Content-Range gives the complete length (RFC 9110, section
-    % 15.5.17). A partial file of that length already holds the whole
-    % file. A partial file of any other length cannot belong to the file
-    % on the server, so the download starts again from the beginning.
-    if double(response.StatusCode) == 416 && offset > 0
-        [~, ~, completeLength] = webprogress.internal.parseContentRange(response);
-        if completeLength == offset
+    % 416 answers a range that starts at or past the end of the file. A
+    % partial file as long as the file it came from already holds the
+    % whole file. The length comes from the state file, because a 416
+    % response need not carry Content-Range (RFC 9110, section 15.5.17).
+    if ~isRestartRequired && double(response.StatusCode) == 416 && offset > 0
+        if offset == totalBytes
             return
         end
+        isRestartRequired = true;
+    end
+
+    if isRestartRequired
         deleteIfFile(partialFile)
         deleteIfFile(stateFile)
         [response, consumer] = sendResumableRequest(uri, partialFile, stateFile, ...
-            0, "", monitorOpts);
+            0, "", nan, monitorOpts);
     end
 
     if ~any(double(response.StatusCode) == [200, 206])
@@ -265,20 +280,23 @@ function receiveResumable(uri, partialFile, stateFile, monitorOpts)
 end
 
 function [response, consumer] = sendResumableRequest(uri, partialFile, stateFile, ...
-        offset, validator, monitorOpts)
+        offset, entityTag, totalBytes, monitorOpts)
     %sendResumableRequest - Send a GET request for the bytes from offset onward
     %   An offset of 0 asks for the whole file. Accept-Encoding asks for
     %   the file without a content coding, because a byte range counts
     %   the bytes as sent (RFC 9110, sections 12.5.3 and 14.1), and the
-    %   HTTP client otherwise asks for gzip.
-    consumer = webprogress.internal.ResumableFileConsumer(partialFile, stateFile, offset);
+    %   HTTP client otherwise asks for gzip. If-Range lets a server that
+    %   honours it send the whole file instead of a range when the
+    %   entity tag no longer matches (section 13.1.5).
+    consumer = webprogress.internal.ResumableFileConsumer(partialFile, stateFile, ...
+        offset, entityTag, totalBytes);
     webOpts = createHttpOptions(@(varargin) createResumeMonitor(consumer, monitorOpts));
 
     fields = matlab.net.http.HeaderField("Accept-Encoding", "identity");
     if offset > 0
         fields = [fields, ...
             matlab.net.http.HeaderField("Range", sprintf("bytes=%d-", offset)), ...
-            matlab.net.http.HeaderField("If-Range", validator)];
+            matlab.net.http.HeaderField("If-Range", entityTag)];
     end
     method = matlab.net.http.RequestMethod.GET;
     req = matlab.net.http.RequestMessage(method, fields, []);
@@ -295,12 +313,14 @@ function monitor = createResumeMonitor(consumer, monitorOpts)
     consumer.ProgressMonitor = monitor;
 end
 
-function validator = readValidator(stateFile)
-    %readValidator - Return the strong validator saved in a state file, or ""
-    %   A weak entity tag cannot be used in If-Range (RFC 9110, section
-    %   13.1.5). A state file that cannot be read, as after an
-    %   interruption while it was written, gives no validator.
-    validator = "";
+function [entityTag, totalBytes] = readState(stateFile)
+    %readState - Return the entity tag and length saved in a state file
+    %   The entity tag is "" and the length NaN when the file is missing
+    %   or cannot be read, as after an interruption while it was written.
+    %   A weak entity tag cannot tell whether two responses carry the
+    %   same bytes (RFC 9110, section 8.8.3), so it counts as none.
+    entityTag = "";
+    totalBytes = nan;
     if ~isfile(stateFile)
         return
     end
@@ -309,13 +329,16 @@ function validator = readValidator(stateFile)
     catch
         return
     end
-    if isstruct(state) && isfield(state, 'Validator') ...
-            && (ischar(state.Validator) || isstring(state.Validator))
-        savedValidator = strtrim(string(state.Validator));
-        if ~startsWith(savedValidator, "W/")
-            validator = savedValidator;
-        end
+    if ~isstruct(state) || ~isfield(state, 'ETag') || ~isfield(state, 'TotalBytes') ...
+            || ~(ischar(state.ETag) || isstring(state.ETag)) || ~isnumeric(state.TotalBytes)
+        return
     end
+    savedETag = strtrim(string(state.ETag));
+    if strlength(savedETag) == 0 || startsWith(savedETag, "W/")
+        return
+    end
+    entityTag = savedETag;
+    totalBytes = double(state.TotalBytes);
 end
 
 function assertCompleteResumable(partialFile, expectedBytes, totalBytes)
