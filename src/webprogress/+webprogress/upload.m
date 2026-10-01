@@ -122,7 +122,9 @@ function [wasSuccess, response] = upload(filePath, url, options)
     fileInfo = dir(filePath);
     fileSizeBytes = fileInfo.bytes;
     numBytes = min(options.NumBytes, fileSizeBytes - options.Offset);
-    if options.Offset > fileSizeBytes || numBytes < options.NumBytes
+    isOffsetPastEnd = options.Offset > fileSizeBytes;
+    isRangePastEnd = ~isinf(options.NumBytes) && options.Offset + options.NumBytes > fileSizeBytes;
+    if isOffsetPastEnd || isRangePastEnd
         error("webprogress:upload:RangeOutsideFile", ...
             "Cannot send %g bytes from byte %d of ""%s"", because the file has %d bytes. " + ...
             "Give an Offset and NumBytes that lie within the file.", ...
