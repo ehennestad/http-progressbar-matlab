@@ -10,6 +10,7 @@
 %
 % Progress display
 %   webprogress.FileTransferProgressMonitor - Progress monitor for HTTP file transfers
+%   webprogress.MultipartProgressMonitor    - One progress display for a file sent in several parts
 %
 % Examples
 %   progressDialogDemo                      - Demonstrate the dialog-based progress displays

@@ -164,6 +164,44 @@ classdef FileTransferProgressMonitorTest < matlab.unittest.TestCase
             testCase.verifyEqual(monitor.TransferredMb, 9)
         end
 
+        function testMultipartProgressCoversWholeFile(testCase)
+            monitor = webprogress.MultipartProgressMonitor(testCase.FileSizeBytes, ...
+                'DisplayMode', 'Command Window', 'UpdateInterval', 0);
+            monitor.Direction = matlab.net.http.MessageType.Request;
+
+            firstPart = captureOutput(@() setValues(monitor, 2 * 2^20));
+            monitor.addCompletedBytes(2 * 2^20);
+            secondPart = captureOutput(@() setValues(monitor, 1 * 2^20));
+
+            testCase.verifySubstring(firstPart, 'Uploaded 2 MB/10 MB (20%)')
+            testCase.verifySubstring(secondPart, 'Uploaded 3 MB/10 MB (30%)')
+        end
+
+        function testMultipartDisplayStaysOpenAfterRequest(testCase)
+            monitor = webprogress.MultipartProgressMonitor(testCase.FileSizeBytes, ...
+                'DisplayMode', 'Command Window', 'UpdateInterval', 0);
+            monitor.Direction = matlab.net.http.MessageType.Request;
+            captureOutput(@() setValues(monitor, 2 * 2^20));
+
+            output = captureOutput(@() monitor.done());
+
+            testCase.verifyEmpty(output)
+        end
+
+        function testMultipartCloseCountsCompletedParts(testCase)
+            % The last part fails, so it is not added and does not count.
+            monitor = webprogress.MultipartProgressMonitor(testCase.FileSizeBytes, ...
+                'DisplayMode', 'Command Window', 'UpdateInterval', 0);
+            monitor.Direction = matlab.net.http.MessageType.Request;
+            captureOutput(@() setValues(monitor, 3 * 2^20));
+            monitor.addCompletedBytes(3 * 2^20);
+            captureOutput(@() setValues(monitor, 2 * 2^20));
+
+            output = captureOutput(@() close(monitor));
+
+            testCase.verifySubstring(output, 'Uploaded 3 MB/10 MB (30%). Completed in')
+        end
+
         function testCommandWindowPrintsEveryUpdate(testCase)
             monitor = createCommandWindowMonitor(testCase.FileSizeBytes, 'data.bin');
             megabytes = [2, 5, 9] * 2^20;
