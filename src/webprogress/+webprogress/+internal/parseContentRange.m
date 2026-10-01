@@ -25,15 +25,20 @@ function [firstByte, lastByte, completeLength] = parseContentRange(response)
         return
     end
 
-    tokens = regexp(char(field(end).Value), ...
-        '^\s*bytes\s+(?:(\d+)-(\d+)|\*)/(\d+|\*)\s*$', 'tokens', 'once');
-    if isempty(tokens)
+    % The two forms are matched apart, because regexp leaves out the
+    % tokens of an alternative that did not match. str2double gives NaN
+    % for "*".
+    value = char(field(end).Value);
+    tokens = regexp(value, '^\s*bytes\s+(\d+)-(\d+)/(\d+|\*)\s*$', 'tokens', 'once');
+    if ~isempty(tokens)
+        firstByte = str2double(tokens{1});
+        lastByte = str2double(tokens{2});
+        completeLength = str2double(tokens{3});
         return
     end
 
-    % An unmatched group gives '' and str2double('') gives NaN, as it
-    % does for "*".
-    firstByte = str2double(tokens{1});
-    lastByte = str2double(tokens{2});
-    completeLength = str2double(tokens{3});
+    tokens = regexp(value, '^\s*bytes\s+\*/(\d+)\s*$', 'tokens', 'once');
+    if ~isempty(tokens)
+        completeLength = str2double(tokens{1});
+    end
 end
