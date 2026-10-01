@@ -247,7 +247,8 @@ function receiveResumable(uri, partialFile, stateFile, monitorOpts)
     % file. A partial file of any other length cannot belong to the file
     % on the server, so the download starts again from the beginning.
     if double(response.StatusCode) == 416 && offset > 0
-        if getUnsatisfiedRangeLength(response) == offset
+        [~, ~, completeLength] = webprogress.internal.parseContentRange(response);
+        if completeLength == offset
             return
         end
         deleteIfFile(partialFile)
@@ -256,18 +257,11 @@ function receiveResumable(uri, partialFile, stateFile, monitorOpts)
             0, "", monitorOpts);
     end
 
-    if strlength(consumer.RejectReason) > 0
-        error("webprogress:download:UnexpectedRange", ...
-            "Cannot resume the download. %s The partial file ""%s"" was left " + ...
-            "unchanged. Delete it to download the file from the beginning.", ...
-            consumer.RejectReason, partialFile)
-    end
-
     if ~any(double(response.StatusCode) == [200, 206])
         raiseRequestFailed(response)
     end
 
-    assertCompleteResumable(partialFile, consumer.TotalBytes)
+    assertCompleteResumable(partialFile, consumer.ExpectedBytes, consumer.TotalBytes)
 end
 
 function [response, consumer] = sendResumableRequest(uri, partialFile, stateFile, ...
@@ -293,11 +287,11 @@ function [response, consumer] = sendResumableRequest(uri, partialFile, stateFile
 end
 
 function monitor = createResumeMonitor(consumer, monitorOpts)
-    %createResumeMonitor - Create a progress monitor that counts the partial file
-    %   The consumer sets StartBytes once the response status shows
-    %   whether the body continues the partial file or replaces it.
-    monitor = webprogress.FileTransferProgressMonitor(monitorOpts{:}, ...
-        'StartBytes', consumer.WriteOffset);
+    %createResumeMonitor - Create a progress monitor and hand it to the consumer
+    %   The consumer sets the StartBytes of the monitor once the response
+    %   status shows whether the body continues the partial file or
+    %   replaces it.
+    monitor = webprogress.FileTransferProgressMonitor(monitorOpts{:});
     consumer.ProgressMonitor = monitor;
 end
 
@@ -324,39 +318,32 @@ function validator = readValidator(stateFile)
     end
 end
 
-function totalBytes = getUnsatisfiedRangeLength(response)
-    %getUnsatisfiedRangeLength - Return the length in "Content-Range: bytes */LENGTH"
-    %   The result is NaN when the response does not give it.
-    totalBytes = nan;
-    field = response.getFields("Content-Range");
-    if isempty(field)
-        return
-    end
-    tokens = regexp(char(field(end).Value), '^\s*bytes\s+\*/(\d+)\s*$', 'tokens', 'once');
-    if ~isempty(tokens)
-        totalBytes = str2double(tokens{1});
-    end
-end
-
-function assertCompleteResumable(partialFile, totalBytes)
+function assertCompleteResumable(partialFile, expectedBytes, totalBytes)
     %assertCompleteResumable - Raise an error if the partial file is not complete
-    %   totalBytes is the complete length from Content-Range for a 206
-    %   response, or from Content-Length for a 200 response. It is NaN
-    %   when the response does not give it, and then there is nothing to
-    %   compare with.
-    if isnan(totalBytes)
-        return
-    end
+    %   expectedBytes is the size of the partial file after the whole
+    %   body, and totalBytes the length of the complete file. For a 206
+    %   response both come from Content-Range, and the body may end before
+    %   the complete length when the server does not know it ("*") or
+    %   sends less than the rest of the file. For a 200 response both are
+    %   the Content-Length. Either is NaN when the response does not give
+    %   it, and a transfer that neither describes cannot be checked.
     receivedBytes = 0;
     if isfile(partialFile)
         fileInfo = dir(partialFile);
         receivedBytes = fileInfo.bytes;
     end
-    if receivedBytes ~= totalBytes
+
+    if ~isnan(totalBytes) && receivedBytes ~= totalBytes
         error("webprogress:download:IncompleteTransfer", ...
             "The download stopped after %d of %d bytes. The part received is kept " + ...
             "in ""%s"". Call webprogress.download again with Resume=true to continue.", ...
             receivedBytes, totalBytes, partialFile)
+    elseif isnan(totalBytes) && ~isnan(expectedBytes) && receivedBytes ~= expectedBytes
+        error("webprogress:download:IncompleteTransfer", ...
+            "The download stopped after %d bytes, before the %d bytes the server sent " + ...
+            "had arrived. The part received is kept in ""%s"". Call " + ...
+            "webprogress.download again with Resume=true to continue.", ...
+            receivedBytes, expectedBytes, partialFile)
     end
 end
 
@@ -367,31 +354,10 @@ function assertCompleteTransfer(response, filePath)
     %   truncated file. The size of the received file is compared with the
     %   Content-Length of the response. Without that header, as for a
     %   chunked response, there is nothing to compare with. A body with a
-    %   Content-Encoding such as gzip is decoded while it is saved, so its
-    %   saved size differs from Content-Length and is not compared. The
-    %   coding "identity" means a body that was not transformed, so its
-    %   sizes do match. RFC 9110 reserves that token for Accept-Encoding
-    %   and RFC 2616 defined it as a content coding, which is why a server
-    %   may still send it in Content-Encoding.
-    %
-    %   A response with several Content-Length headers of different values
-    %   is invalid (RFC 9110, section 8.6), and the length of its body
-    %   cannot be known, so it is an error. Repeated headers with the same
-    %   value count as one.
-    lengthFields = response.getFields("Content-Length");
-    if isempty(lengthFields)
-        return
-    end
-    declaredBytes = unique(lengthFields.convert());
-    if ~isscalar(declaredBytes)
-        error("webprogress:download:InvalidContentLength", ...
-            "The server gave %d different lengths for the file (%s bytes), so the " + ...
-            "download cannot be checked and the file was not saved. Try the download again.", ...
-            numel(declaredBytes), strjoin(string(declaredBytes), ", "))
-    end
-
-    encodingField = response.getFields("Content-Encoding");
-    if ~isempty(encodingField) && ~strcmpi(strtrim(string(encodingField(end).Value)), "identity")
+    %   content coding such as gzip is decoded while it is saved, so its
+    %   saved size differs from Content-Length and is not compared.
+    declaredBytes = webprogress.internal.getDeclaredLength(response);
+    if isnan(declaredBytes) || ~webprogress.internal.hasIdentityEncoding(response)
         return
     end
 

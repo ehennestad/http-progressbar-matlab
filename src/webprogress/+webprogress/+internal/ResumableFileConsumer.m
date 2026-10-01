@@ -6,11 +6,17 @@ classdef ResumableFileConsumer < matlab.net.http.io.FileConsumer
 %   request without a Range header. The file consumer appends the body
 %   to PARTFILE, and the response status decides what happens first:
 %       206 - The body is appended to PARTFILE when the Content-Range of
-%             the response starts at OFFSET.
+%             the response starts at OFFSET and the body has no content
+%             coding. Otherwise the consumer raises an error, which ends
+%             the transfer before the body is received.
 %       200 - PARTFILE is replaced by the body, and STATEFILE is written
 %             with the validator and length of the new response.
 %   A response with any other status leaves both files unchanged, and
 %   its body goes to the response message as without a consumer.
+%
+%   After the response, ExpectedBytes is the size PARTFILE has when the
+%   whole body arrived, and TotalBytes is the length of the complete
+%   file. Each is NaN when the response does not give it.
 %
 %   STATEFILE holds the strong validator of the file, as ETag or
 %   Last-Modified, and its total length. It never holds the URL, which
@@ -27,9 +33,9 @@ classdef ResumableFileConsumer < matlab.net.http.io.FileConsumer
     end
 
     properties (SetAccess = private)
-        WriteOffset (1,1) double = 0   % Size of the partial file the body is written after
-        TotalBytes (1,1) double = nan  % Length of the complete file, if the response gives it
-        RejectReason string = ""       % Why a 206 response was not accepted
+        WriteOffset (1,1) double = 0     % Size of the partial file the body is written after
+        ExpectedBytes (1,1) double = nan % Size of the partial file after the whole body
+        TotalBytes (1,1) double = nan    % Length of the complete file
     end
 
     properties
@@ -66,32 +72,45 @@ classdef ResumableFileConsumer < matlab.net.http.io.FileConsumer
             ok = false;
 
             if statusCode == 206
-                [rangeStart, totalBytes] = parseContentRange(response);
-                if rangeStart ~= obj.RequestedOffset
-                    obj.RejectReason = sprintf("The server sent the file from byte %d " + ...
-                        "instead of byte %d.", rangeStart, obj.RequestedOffset);
-                    return
+                % A 206 response to a single range carries Content-Range
+                % (RFC 9110, section 15.3.7). The body cannot be appended
+                % when it starts elsewhere than the partial file ends. An
+                % error here ends the transfer, so the body is not
+                % received into memory as a refused body would be.
+                [firstByte, lastByte, completeLength] = ...
+                    webprogress.internal.parseContentRange(response);
+                if firstByte ~= obj.RequestedOffset
+                    obj.raiseUnexpectedRange(sprintf( ...
+                        "The server sent the file from byte %d instead of byte %d.", ...
+                        firstByte, obj.RequestedOffset))
                 end
                 % A byte range applies to the representation as it is
                 % sent, after any content coding (RFC 9110, sections 8.4
                 % and 14.1). A decoded body cannot be appended at an
                 % offset counted in encoded bytes.
-                if ~hasIdentityEncoding(response)
-                    obj.RejectReason = "The server sent the part of the file " + ...
-                        "in a compressed form, which cannot be appended to the partial file.";
-                    return
+                if ~webprogress.internal.hasIdentityEncoding(response)
+                    obj.raiseUnexpectedRange("The server sent the part of the file " + ...
+                        "in a compressed form, which cannot be appended to the partial file.")
                 end
                 obj.WriteOffset = obj.RequestedOffset;
-                obj.TotalBytes = totalBytes;
+                obj.ExpectedBytes = lastByte + 1;
+                obj.TotalBytes = completeLength;
                 ok = initialize@matlab.net.http.io.FileConsumer(obj);
 
             elseif statusCode == 200
+                % Content-Length counts the bytes as sent, so it is the
+                % file size only for a body without a content coding.
+                totalBytes = nan;
+                if webprogress.internal.hasIdentityEncoding(response)
+                    totalBytes = webprogress.internal.getDeclaredLength(response);
+                end
                 % Replace the partial file before the state file, so that
                 % an interruption between the two never pairs old data
                 % with the validator of a new file.
                 fclose(openFile(obj.PartFilePath, 'w'));
                 obj.WriteOffset = 0;
-                obj.TotalBytes = getContentLength(response);
+                obj.ExpectedBytes = totalBytes;
+                obj.TotalBytes = totalBytes;
                 obj.writeState(response)
                 ok = initialize@matlab.net.http.io.FileConsumer(obj);
             end
@@ -104,13 +123,21 @@ classdef ResumableFileConsumer < matlab.net.http.io.FileConsumer
     end
 
     methods (Access = private)
+        function raiseUnexpectedRange(obj, reason)
+        %raiseUnexpectedRange - Raise the error for a 206 response that cannot be appended
+            error("webprogress:download:UnexpectedRange", ...
+                "Cannot resume the download. %s The partial file ""%s"" was left " + ...
+                "unchanged. Delete it to download the file from the beginning.", ...
+                reason, obj.PartFilePath)
+        end
+
         function writeState(obj, response)
         %writeState - Save the validator and length of a 200 response
         %   Without a strong validator, or for a body that was decoded
         %   from a content coding, the partial file cannot be resumed, so
         %   no state file is kept.
             validator = "";
-            if hasIdentityEncoding(response)
+            if webprogress.internal.hasIdentityEncoding(response)
                 validator = getStrongValidator(response);
             end
 
@@ -136,47 +163,6 @@ function fileId = openFile(filePath, permission)
         error("webprogress:download:CannotSaveFile", ...
             "Cannot write the downloaded data to ""%s"": %s", filePath, message)
     end
-end
-
-function [rangeStart, totalBytes] = parseContentRange(response)
-    %parseContentRange - Return the first byte and complete length of a 206 response
-    %   Content-Range has the form "bytes FIRST-LAST/COMPLETE", where
-    %   COMPLETE is "*" when the server does not know the length (RFC 9110,
-    %   section 14.4). A 206 response to a single range carries this field
-    %   (section 15.3.7). rangeStart is NaN when the field is missing or
-    %   malformed, and totalBytes is NaN for an unknown length.
-    rangeStart = nan;
-    totalBytes = nan;
-    field = response.getFields("Content-Range");
-    if isempty(field)
-        return
-    end
-    tokens = regexp(char(field(end).Value), ...
-        '^\s*bytes\s+(\d+)-\d+/(\d+|\*)\s*$', 'tokens', 'once');
-    if isempty(tokens)
-        return
-    end
-    rangeStart = str2double(tokens{1});
-    totalBytes = str2double(tokens{2});
-end
-
-function totalBytes = getContentLength(response)
-    %getContentLength - Return the Content-Length of a response, or NaN
-    %   The length counts the bytes as sent, so it is the file size only
-    %   for a body without a content coding.
-    totalBytes = nan;
-    field = response.getFields("Content-Length");
-    if ~isempty(field) && hasIdentityEncoding(response)
-        totalBytes = double(field(end).convert());
-    end
-end
-
-function tf = hasIdentityEncoding(response)
-    %hasIdentityEncoding - Return whether the body has no content coding
-    %   RFC 2616 defined "identity" as a content coding, so a server may
-    %   still name it in Content-Encoding.
-    field = response.getFields("Content-Encoding");
-    tf = isempty(field) || strcmpi(strtrim(string(field(end).Value)), "identity");
 end
 
 function validator = getStrongValidator(response)
