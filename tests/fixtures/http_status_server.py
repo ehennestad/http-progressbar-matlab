@@ -1,7 +1,10 @@
 """Local HTTP server for the upload and download tests.
 
 A PUT or POST request to /<code> receives HTTP status <code> with an empty
-body. A GET request to /<code> receives status <code> with an HTML error
+body. A PUT or POST request to /echo receives status 200 with a JSON body
+that describes the request body: its length, the sum of its bytes, its
+first and last bytes, and the Content-Length and Transfer-Encoding
+headers of the request (null when absent). A GET request to /<code> receives status <code> with an HTML error
 page. A GET request to /files/<name> receives status 200 with a text/plain
 body. Its query can set the body with content=<text>, or with
 size=<bytes> to a body of that many bytes that repeat the values 0 to
@@ -51,11 +54,40 @@ file_requests = []
 
 
 class StatusHandler(http.server.BaseHTTPRequestHandler):
+    def _read_body(self):
+        """Return the request body, decoding a chunked transfer coding."""
+        if self.headers.get("Transfer-Encoding", "").lower() == "chunked":
+            body = b""
+            while True:
+                size = int(self.rfile.readline().split(b";")[0], 16)
+                if size == 0:
+                    # Skip any trailer fields and the final empty line.
+                    while self.rfile.readline() not in (b"\r\n", b"\n", b""):
+                        pass
+                    return body
+                body += self.rfile.read(size)
+                self.rfile.readline()
+        return self.rfile.read(int(self.headers.get("Content-Length", 0)))
+
     def _respond(self):
         # Read the whole request body before responding, so the client
         # finishes sending the file.
-        length = int(self.headers.get("Content-Length", 0))
-        self.rfile.read(length)
+        body = self._read_body()
+        if self.path.strip("/") == "echo":
+            reply = json.dumps({
+                "length": len(body),
+                "sum": sum(body),
+                "head": list(body[:16]),
+                "tail": list(body[-16:]),
+                "content_length": self.headers.get("Content-Length"),
+                "transfer_encoding": self.headers.get("Transfer-Encoding"),
+            }).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(reply)))
+            self.end_headers()
+            self.wfile.write(reply)
+            return
         code = int(self.path.strip("/").split("/")[0] or 200)
         self.send_response(code)
         self.send_header("Content-Length", "0")
