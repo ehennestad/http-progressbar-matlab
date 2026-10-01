@@ -290,7 +290,6 @@ function [response, consumer] = sendResumableRequest(uri, partialFile, stateFile
     req = matlab.net.http.RequestMessage(method, fields, []);
 
     response = req.send(uri, webOpts, consumer);
-    consumer.closeFile()
 end
 
 function monitor = createResumeMonitor(consumer, monitorOpts)

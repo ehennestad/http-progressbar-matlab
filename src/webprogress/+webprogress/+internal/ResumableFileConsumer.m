@@ -1,10 +1,10 @@
-classdef ResumableFileConsumer < matlab.net.http.io.ContentConsumer
+classdef ResumableFileConsumer < matlab.net.http.io.FileConsumer
 %ResumableFileConsumer - Write a response body to a partial file that can be resumed
 %   consumer = webprogress.internal.ResumableFileConsumer(PARTFILE,
 %   STATEFILE, OFFSET) writes the body of a response to PARTFILE. OFFSET
 %   is the start of the byte range that the request asked for, or 0 for a
-%   request without a Range header. The decision to append or to replace
-%   follows the response status:
+%   request without a Range header. The file consumer appends the body
+%   to PARTFILE, and the response status decides what happens first:
 %       206 - The body is appended to PARTFILE when the Content-Range of
 %             the response starts at OFFSET.
 %       200 - PARTFILE is replaced by the body, and STATEFILE is written
@@ -38,10 +38,6 @@ classdef ResumableFileConsumer < matlab.net.http.io.ContentConsumer
         ProgressMonitor = []
     end
 
-    properties (Access = private)
-        FileId = -1 % Identifier of the open partial file
-    end
-
     methods
         function obj = ResumableFileConsumer(partFilePath, stateFilePath, requestedOffset)
             arguments
@@ -49,34 +45,12 @@ classdef ResumableFileConsumer < matlab.net.http.io.ContentConsumer
                 stateFilePath   (1,1) string
                 requestedOffset (1,1) double {mustBeNonnegative, mustBeInteger}
             end
+            % Permission 'a' appends to an existing file, and initialize
+            % empties the file first when the body replaces it.
+            obj@matlab.net.http.io.FileConsumer(char(partFilePath), 'a');
             obj.PartFilePath = partFilePath;
             obj.StateFilePath = stateFilePath;
             obj.RequestedOffset = requestedOffset;
-        end
-
-        function delete(obj)
-            obj.closeFile()
-        end
-
-        function closeFile(obj)
-        %closeFile - Close the partial file if it is open
-            if obj.FileId >= 0
-                fclose(obj.FileId);
-                obj.FileId = -1;
-            end
-        end
-
-        function [len, stop] = putData(obj, data)
-        %putData - Append a buffer of the body to the partial file
-        %   Empty data marks the end of the body.
-            stop = false;
-            if isempty(data)
-                obj.closeFile()
-                len = 0;
-                return
-            end
-            fwrite(obj.FileId, data, 'uint8');
-            len = numel(data);
         end
     end
 
@@ -84,8 +58,9 @@ classdef ResumableFileConsumer < matlab.net.http.io.ContentConsumer
         function ok = initialize(obj)
         %initialize - Accept the body of a 200 or a matching 206 response
         %   MATLAB calls initialize when the response header arrives, and
-        %   sends the body to putData only when it returns true.
-            obj.closeFile()
+        %   sends the body to putData only when it returns true. The file
+        %   consumer accepts a body whatever the status, so its decision
+        %   counts only for a status whose body belongs in the file.
             response = obj.Response;
             statusCode = double(response.StatusCode);
             ok = false;
@@ -106,20 +81,19 @@ classdef ResumableFileConsumer < matlab.net.http.io.ContentConsumer
                         "in a compressed form, which cannot be appended to the partial file.";
                     return
                 end
-                obj.FileId = openFile(obj.PartFilePath, 'a');
                 obj.WriteOffset = obj.RequestedOffset;
                 obj.TotalBytes = totalBytes;
-                ok = true;
+                ok = initialize@matlab.net.http.io.FileConsumer(obj);
 
             elseif statusCode == 200
                 % Replace the partial file before the state file, so that
                 % an interruption between the two never pairs old data
                 % with the validator of a new file.
-                obj.FileId = openFile(obj.PartFilePath, 'w');
+                fclose(openFile(obj.PartFilePath, 'w'));
                 obj.WriteOffset = 0;
                 obj.TotalBytes = getContentLength(response);
                 obj.writeState(response)
-                ok = true;
+                ok = initialize@matlab.net.http.io.FileConsumer(obj);
             end
 
             monitor = obj.ProgressMonitor;
