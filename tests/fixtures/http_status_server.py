@@ -23,7 +23,9 @@ from first onward, or status 416 when first is at or past the end of the
 body. With If-Range, the range is honoured only when If-Range equals the
 validator of the response, and status 200 with the whole body is sent
 otherwise. ignore_range=1 makes the server ignore Range and send status
-200. truncate and delay apply to the bytes sent.
+200. range_start=<n> makes a 206 response start at byte n instead of the
+byte the request asked for, and complete_length=* makes it give the
+complete length as "*". truncate and delay apply to the bytes sent.
 
 The server binds a free port on 127.0.0.1 and writes the port number to
 the file given as the first command-line argument.
@@ -168,8 +170,10 @@ class StatusHandler(http.server.BaseHTTPRequestHandler):
         if first >= len(body):
             headers.append(("Content-Range", f"bytes */{len(body)}"))
             return 416, b"", headers
+        first = int(query.get("range_start", [first])[0])
+        complete = query.get("complete_length", [str(len(body))])[0]
         headers.append(("Content-Range",
-                        f"bytes {first}-{len(body) - 1}/{len(body)}"))
+                        f"bytes {first}-{len(body) - 1}/{complete}"))
         return 206, body[first:], headers
 
     def log_message(self, *args):

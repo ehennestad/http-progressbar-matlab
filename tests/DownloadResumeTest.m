@@ -139,6 +139,74 @@ classdef DownloadResumeTest < matlab.unittest.TestCase
                 ["data.txt.part", "data.txt.part.json"])
         end
 
+        function testTruncatedResumeKeepsPartialFiles(testCase)
+            % The resumed transfer is cut off as well, after 10 of its 30
+            % bytes, and a third call completes the file.
+            content = repmat('0123456789', 1, 5);
+            url = testCase.fileUrl('content', content);
+            testCase.downloadFirstPart(url)
+
+            testCase.verifyError(@() downloadQuietly(testCase.Target, url + "&truncate=10"), ...
+                'webprogress:download:IncompleteTransfer')
+
+            testCase.verifyEqual(fileread(testCase.Target + ".part"), content(1:30))
+            testCase.verifyEqual(listFiles(testCase.Folder), ...
+                ["data.txt.part", "data.txt.part.json"])
+
+            downloadQuietly(testCase.Target, url);
+
+            testCase.verifyEqual(fileread(testCase.Target), content)
+        end
+
+        function testUnknownCompleteLengthIsChecked(testCase)
+            % Content-Range gives the complete length as "*", so the end
+            % of the range is what the received size is checked against.
+            content = repmat('0123456789', 1, 5);
+            url = testCase.fileUrl('content', content, 'complete_length', '*');
+            testCase.downloadFirstPart(url)
+
+            testCase.verifyError(@() downloadQuietly(testCase.Target, url + "&truncate=10"), ...
+                'webprogress:download:IncompleteTransfer')
+
+            testCase.verifyEqual(fileread(testCase.Target + ".part"), content(1:30))
+            testCase.verifyEqual(listFiles(testCase.Folder), ...
+                ["data.txt.part", "data.txt.part.json"])
+        end
+
+        function testUnknownCompleteLengthCompletesFile(testCase)
+            content = repmat('0123456789', 1, 5);
+            url = testCase.fileUrl('content', content, 'complete_length', '*');
+            testCase.downloadFirstPart(url)
+
+            downloadQuietly(testCase.Target, url);
+
+            testCase.verifyEqual(fileread(testCase.Target), content)
+            testCase.verifyEqual(listFiles(testCase.Folder), "data.txt")
+        end
+
+        function testRangeFromWrongByteErrorsAndKeepsPartialFiles(testCase)
+            % The server answers the range from byte 20 with a 206 that
+            % starts at byte 0, which cannot be appended.
+            testCase.downloadFirstPart(testCase.fileUrl( ...
+                'content', repmat('a', 1, 50), 'etag', 'e1'))
+            partBefore = readBytes(testCase.Target + ".part");
+            stateBefore = readBytes(testCase.Target + ".part.json");
+
+            testCase.verifyError(@() downloadQuietly(testCase.Target, testCase.fileUrl( ...
+                'content', repmat('b', 1, 50), 'etag', 'e1', 'range_start', '0')), ...
+                'webprogress:download:UnexpectedRange')
+
+            testCase.verifyEqual(readBytes(testCase.Target + ".part"), partBefore)
+            testCase.verifyEqual(readBytes(testCase.Target + ".part.json"), stateBefore)
+        end
+
+        function testFirstFailedRequestLeavesNoFiles(testCase)
+            testCase.verifyError(@() downloadQuietly(testCase.Target, ...
+                testCase.ServerUrl + "/403"), 'webprogress:download:RequestFailed')
+
+            testCase.verifyEmpty(listFiles(testCase.Folder))
+        end
+
         function testWeakEntityTagIsDownloadedFromStart(testCase)
             % If-Range cannot carry a weak ETag. The server honours a
             % range for this ETag, so a resumed download would give "a"
