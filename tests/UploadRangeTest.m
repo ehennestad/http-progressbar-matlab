@@ -91,6 +91,36 @@ classdef UploadRangeTest < matlab.unittest.TestCase
                 'webprogress:upload:RangeOutsideFile')
         end
 
+        function testOffsetAtEndOfFileErrors(testCase)
+            % A part loop that runs one step too far must not send an
+            % empty part.
+            testCase.verifyError(@() testCase.uploadToEcho( ...
+                'Offset', testCase.FileSizeBytes), ...
+                'webprogress:upload:RangeOutsideFile')
+        end
+
+        function testMissingFileErrors(testCase)
+            % The error comes before any progress is printed.
+            missingPath = fullfile(fileparts(testCase.FilePath), 'missing.bin');
+
+            testCase.verifyError(@() webprogress.upload(missingPath, ...
+                testCase.ServerUrl + "/echo", 'DisplayMode', 'Command Window'), ...
+                'webprogress:upload:FileNotFound')
+        end
+
+        function testContentTypeFromRequestMessageIsSent(testCase)
+            % A storage service may require the Content-Type of a part.
+            % The one given in the request must arrive once, not next to
+            % one the provider adds.
+            request = matlab.net.http.RequestMessage(matlab.net.http.RequestMethod.PUT, ...
+                matlab.net.http.field.ContentTypeField("application/octet-stream"), []);
+
+            echo = testCase.uploadToEcho('Offset', 1000, 'NumBytes', 5000, ...
+                'RequestMessage', request);
+
+            testCase.verifyEqual(string(echo.content_types), "application/octet-stream")
+        end
+
         function testFractionalNumBytesErrors(testCase)
             testCase.verifyError(@() testCase.uploadToEcho('NumBytes', 1.5), ...
                 'webprogress:upload:InvalidNumBytes')

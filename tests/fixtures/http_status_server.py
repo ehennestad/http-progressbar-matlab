@@ -3,8 +3,8 @@
 A PUT or POST request to /<code> receives HTTP status <code> with an empty
 body. A PUT or POST request to /echo receives status 200 with a JSON body
 that describes the request body: its length, the sum of its bytes, its
-first and last bytes, and the Content-Length and Transfer-Encoding
-headers of the request (null when absent). A GET request to /<code> receives status <code> with an HTML error
+first and last bytes, the Content-Length and Transfer-Encoding headers of
+the request (null when absent), and the list of its Content-Type headers. A GET request to /<code> receives status <code> with an HTML error
 page. A GET request to /files/<name> receives status 200 with a text/plain
 body. Its query can set the body with content=<text>, or with
 size=<bytes> to a body of that many bytes that repeat the values 0 to
@@ -74,6 +74,7 @@ class StatusHandler(http.server.BaseHTTPRequestHandler):
                 "tail": list(body[-16:]),
                 "content_length": self.headers.get("Content-Length"),
                 "transfer_encoding": self.headers.get("Transfer-Encoding"),
+                "content_types": self.headers.get_all("Content-Type") or [],
             }).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
