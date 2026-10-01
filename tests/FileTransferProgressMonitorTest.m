@@ -140,6 +140,30 @@ classdef FileTransferProgressMonitorTest < matlab.unittest.TestCase
             testCase.verifyEqual(monitor.PercentTransferred, 25, 'AbsTol', 1e-12)
         end
 
+        function testStartBytesCountTowardProgress(testCase)
+            % A resumed download receives only the rest of the file, and
+            % the bytes already on disk count toward its progress.
+            monitor = webprogress.FileTransferProgressMonitor( ...
+                'DisplayMode', 'Command Window', 'UpdateInterval', 0, ...
+                'FileSizeBytes', testCase.FileSizeBytes, 'StartBytes', 4 * 2^20);
+            monitor.Direction = matlab.net.http.MessageType.Response;
+
+            output = captureOutput(@() setValues(monitor, 1 * 2^20));
+
+            testCase.verifyEqual(monitor.PercentTransferred, 50, 'AbsTol', 1e-12)
+            testCase.verifySubstring(output, '5 MB/10 MB (50%)')
+        end
+
+        function testStartBytesCanBeSetAfterCreation(testCase)
+            monitor = createCommandWindowMonitor(testCase.FileSizeBytes, 'data.bin');
+            monitor.StartBytes = 8 * 2^20;
+
+            captureOutput(@() setValues(monitor, 1 * 2^20));
+
+            testCase.verifyEqual(monitor.PercentTransferred, 90, 'AbsTol', 1e-12)
+            testCase.verifyEqual(monitor.TransferredMb, 9)
+        end
+
         function testCommandWindowPrintsEveryUpdate(testCase)
             monitor = createCommandWindowMonitor(testCase.FileSizeBytes, 'data.bin');
             megabytes = [2, 5, 9] * 2^20;
