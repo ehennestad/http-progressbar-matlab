@@ -216,7 +216,9 @@ classdef DownloadResumeTest < matlab.unittest.TestCase
             url = testCase.fileUrl('size', string(fileSize));
             testCase.downloadFirstPart(url + "&truncate=" + string(2 * 2^20))
 
-            output = downloadWithOutput(testCase.Target, url);
+            % The HTTP stack calls the monitor only once the transfer has
+            % lasted a moment, which a local transfer of 1 MB may not.
+            output = downloadWithOutput(testCase.Target, url + "&delay=0.5");
 
             testCase.verifySubstring(output, '3 MB/3 MB (100%)')
             testCase.verifyEqual(readBytes(testCase.Target), ...
