@@ -79,7 +79,8 @@ classdef DownloadResumeTest < matlab.unittest.TestCase
 
         function testChangedFileIsDownloadedFromStart(testCase)
             % The ETag is made from the body, so the second body has
-            % another ETag and If-Range makes the server send all of it.
+            % another ETag. The server ignores If-Range and sends the
+            % range anyway, which the ETag comparison rejects.
             testCase.downloadFirstPart(testCase.fileUrl('content', repmat('a', 1, 50)))
 
             downloadQuietly(testCase.Target, testCase.fileUrl('content', repmat('b', 1, 50)));
@@ -99,11 +100,13 @@ classdef DownloadResumeTest < matlab.unittest.TestCase
         end
 
         function testCompletePartialFileIsNotDownloadedAgain(testCase)
-            % The server file now has the 20 bytes already received, so
-            % the range from byte 20 gets status 416. A new download
-            % would give "b".
+            % The partial file holds the whole 20-byte file the state file
+            % describes, as after an interruption between the last byte
+            % and the move. The range from byte 20 gets status 416. A
+            % new download would give "b".
             testCase.downloadFirstPart(testCase.fileUrl( ...
                 'content', repmat('a', 1, 50), 'etag', 'e1'))
+            writeText(testCase.Target + ".part.json", '{"ETag":"\"e1\"","TotalBytes":20}')
 
             downloadQuietly(testCase.Target, testCase.fileUrl( ...
                 'content', repmat('b', 1, 20), 'etag', 'e1'));
@@ -113,8 +116,9 @@ classdef DownloadResumeTest < matlab.unittest.TestCase
         end
 
         function testPartialFileLongerThanFileIsDownloadedFromStart(testCase)
-            % The server answers the range from byte 20 with status 416
-            % and a length of 10, which the partial file cannot be part of.
+            % The server answers the range from byte 20 with status 416,
+            % and the partial file is shorter than the 50 bytes the state
+            % file describes, so it cannot hold the whole file.
             testCase.downloadFirstPart(testCase.fileUrl( ...
                 'content', repmat('a', 1, 50), 'etag', 'e1'))
 
@@ -184,20 +188,75 @@ classdef DownloadResumeTest < matlab.unittest.TestCase
             testCase.verifyEqual(listFiles(testCase.Folder), "data.txt")
         end
 
-        function testRangeFromWrongByteErrorsAndKeepsPartialFiles(testCase)
+        function testRangeFromWrongByteIsDownloadedFromStart(testCase)
             % The server answers the range from byte 20 with a 206 that
             % starts at byte 0, which cannot be appended.
+            testCase.downloadFirstPart(testCase.fileUrl( ...
+                'content', repmat('a', 1, 50), 'etag', 'e1'))
+
+            downloadQuietly(testCase.Target, testCase.fileUrl( ...
+                'content', repmat('b', 1, 50), 'etag', 'e1', 'range_start', '0'));
+
+            testCase.verifyEqual(fileread(testCase.Target), repmat('b', 1, 50))
+            testCase.verifyEqual(listFiles(testCase.Folder), "data.txt")
+        end
+
+        function testChangedLengthIsDownloadedFromStart(testCase)
+            % The ETag is unchanged, but the file on the server is longer
+            % than the 50 bytes the state file describes.
+            testCase.downloadFirstPart(testCase.fileUrl( ...
+                'content', repmat('a', 1, 50), 'etag', 'e1'))
+
+            downloadQuietly(testCase.Target, testCase.fileUrl( ...
+                'content', repmat('b', 1, 60), 'etag', 'e1'));
+
+            testCase.verifyEqual(fileread(testCase.Target), repmat('b', 1, 60))
+            testCase.verifyEqual(listFiles(testCase.Folder), "data.txt")
+        end
+
+        function testCompressedResumeErrorsAndKeepsPartialFiles(testCase)
             testCase.downloadFirstPart(testCase.fileUrl( ...
                 'content', repmat('a', 1, 50), 'etag', 'e1'))
             partBefore = readBytes(testCase.Target + ".part");
             stateBefore = readBytes(testCase.Target + ".part.json");
 
             testCase.verifyError(@() downloadQuietly(testCase.Target, testCase.fileUrl( ...
-                'content', repmat('b', 1, 50), 'etag', 'e1', 'range_start', '0')), ...
-                'webprogress:download:UnexpectedRange')
+                'content', repmat('a', 1, 50), 'etag', 'e1', 'gzip', '1')), ...
+                'webprogress:download:ContentEncoded')
 
             testCase.verifyEqual(readBytes(testCase.Target + ".part"), partBefore)
             testCase.verifyEqual(readBytes(testCase.Target + ".part.json"), stateBefore)
+        end
+
+        function testCompressedDownloadErrorsAndLeavesNoFiles(testCase)
+            testCase.verifyError(@() downloadQuietly(testCase.Target, testCase.fileUrl( ...
+                'content', repmat('a', 1, 50), 'gzip', '1')), ...
+                'webprogress:download:ContentEncoded')
+
+            testCase.verifyEmpty(listFiles(testCase.Folder))
+        end
+
+        function testStateFileIsWrittenBeforeBody(testCase)
+            % The connection closes before the first byte of the body,
+            % and the state file is already there.
+            url = testCase.fileUrl('content', repmat('a', 1, 50), 'truncate', '0');
+
+            testCase.verifyError(@() downloadQuietly(testCase.Target, url), ...
+                'webprogress:download:IncompleteTransfer')
+
+            testCase.verifyTrue(isfile(testCase.Target + ".part.json"))
+        end
+
+        function testResumeRequestsAskForIdentityEncoding(testCase)
+            testCase.downloadFirstPart(testCase.fileUrl('content', repmat('a', 1, 50)))
+            downloadQuietly(testCase.Target, testCase.fileUrl('content', repmat('a', 1, 50)));
+
+            requests = testCase.readFileRequests();
+
+            testCase.assertGreaterThanOrEqual(numel(requests), 2)
+            testCase.verifyEqual(requests{end-1}.headers.Accept_Encoding, 'identity')
+            testCase.verifyEqual(requests{end}.headers.Accept_Encoding, 'identity')
+            testCase.verifyEqual(requests{end}.headers.Range, 'bytes=20-')
         end
 
         function testFirstFailedRequestLeavesNoFiles(testCase)
@@ -208,11 +267,12 @@ classdef DownloadResumeTest < matlab.unittest.TestCase
         end
 
         function testWeakEntityTagIsDownloadedFromStart(testCase)
-            % If-Range cannot carry a weak ETag. The server honours a
-            % range for this ETag, so a resumed download would give "a"
-            % followed by "b".
+            % A weak ETag cannot tell that two responses carry the same
+            % bytes, so no state file is kept. The server would honour a
+            % range, which would give "a" followed by "b".
             testCase.downloadFirstPart(testCase.fileUrl( ...
                 'content', repmat('a', 1, 50), 'etag', 'e1', 'weak', '1'))
+            testCase.verifyEqual(listFiles(testCase.Folder), "data.txt.part")
 
             downloadQuietly(testCase.Target, testCase.fileUrl( ...
                 'content', repmat('b', 1, 50), 'etag', 'e1', 'weak', '1'));
@@ -220,11 +280,23 @@ classdef DownloadResumeTest < matlab.unittest.TestCase
             testCase.verifyEqual(fileread(testCase.Target), repmat('b', 1, 50))
         end
 
+        function testMissingEntityTagIsDownloadedFromStart(testCase)
+            testCase.downloadFirstPart(testCase.fileUrl( ...
+                'content', repmat('a', 1, 50), 'no_etag', '1'))
+            testCase.verifyEqual(listFiles(testCase.Folder), "data.txt.part")
+
+            downloadQuietly(testCase.Target, testCase.fileUrl( ...
+                'content', repmat('b', 1, 50), 'no_etag', '1'));
+
+            testCase.verifyEqual(fileread(testCase.Target), repmat('b', 1, 50))
+            testCase.verifyEqual(listFiles(testCase.Folder), "data.txt")
+        end
+
         function testWeakEntityTagInStateFileIsNotUsed(testCase)
             url = testCase.fileUrl('content', repmat('a', 1, 50), 'etag', 'e1');
             testCase.downloadFirstPart(url)
             writeText(testCase.Target + ".part.json", ...
-                '{"Validator":"W/\"e1\"","TotalBytes":50}')
+                '{"ETag":"W/\"e1\"","TotalBytes":50}')
 
             downloadQuietly(testCase.Target, testCase.fileUrl( ...
                 'content', repmat('b', 1, 50), 'etag', 'e1'));
@@ -242,20 +314,6 @@ classdef DownloadResumeTest < matlab.unittest.TestCase
 
             testCase.verifyEqual(fileread(testCase.Target), repmat('b', 1, 50))
             testCase.verifyEqual(listFiles(testCase.Folder), "data.txt")
-        end
-
-        function testLastModifiedIsUsedWithoutEntityTag(testCase)
-            % The date is long before the Date header of the response,
-            % which makes it a strong validator.
-            lastModified = "Mon,%2001%20Jan%202024%2000:00:00%20GMT";
-            testCase.downloadFirstPart(testCase.fileUrl( ...
-                'content', repmat('a', 1, 50), 'last_modified', lastModified))
-
-            downloadQuietly(testCase.Target, testCase.fileUrl( ...
-                'content', repmat('b', 1, 50), 'last_modified', lastModified));
-
-            testCase.verifyEqual(fileread(testCase.Target), ...
-                [repmat('a', 1, 20), repmat('b', 1, 30)])
         end
 
         function testExistingFileIsReplacedAfterResume(testCase)
@@ -302,6 +360,22 @@ classdef DownloadResumeTest < matlab.unittest.TestCase
                 pairs = string(varargin);
                 query = strjoin(pairs(1:2:end) + "=" + pairs(2:2:end), "&");
                 url = url + "?" + query;
+            end
+        end
+
+        function requests = readFileRequests(testCase)
+            %readFileRequests - Return the file requests the server has received
+            %   The result is a cell array of structs. jsondecode gives a
+            %   struct array instead when every request has the same
+            %   headers, and names a header such as Accept-Encoding
+            %   Accept_Encoding.
+            requestsFile = fullfile(testCase.Folder, 'requests.json');
+            evalc(['webprogress.download(requestsFile, testCase.ServerUrl + "/requests", ', ...
+                '''DisplayMode'', ''Command Window'');']);
+            requests = jsondecode(fileread(requestsFile));
+            delete(requestsFile)
+            if isstruct(requests)
+                requests = num2cell(requests);
             end
         end
 
