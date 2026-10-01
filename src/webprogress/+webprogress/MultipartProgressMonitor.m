@@ -10,7 +10,8 @@ classdef MultipartProgressMonitor < webprogress.FileTransferProgressMonitor
 %
 %   monitor = webprogress.MultipartProgressMonitor(TOTALBYTES,Name=Value)
 %   sets display options:
-%       DisplayMode    - "Dialog Box" (default) or "Command Window".
+%       DisplayMode    - "Dialog Box" (default), "Command Window" or
+%                        "None".
 %       UpdateInterval - Minimum number of seconds between updates. The
 %                        default is 1.
 %       Filename       - Name shown in the progress title. The default
@@ -18,6 +19,10 @@ classdef MultipartProgressMonitor < webprogress.FileTransferProgressMonitor
 %       IndentSize     - Number of spaces before progress printed in the
 %                        Command Window. The default is 0.
 %       Figure         - Figure for a uiprogressdlg. The default is [].
+%       ProgressFcn    - Function called with the progress of the whole
+%                        file. See webprogress.FileTransferProgressMonitor.
+%       CancelRequestedFcn - Function that returns true when the upload
+%                        should stop. It acts as the Cancel button does.
 %
 %   Call close(monitor) after the last part to close the dialog or to
 %   print the completion message. Deleting the monitor also closes the
@@ -65,6 +70,8 @@ classdef MultipartProgressMonitor < webprogress.FileTransferProgressMonitor
                 options.Filename       (1,1) string                       = ""
                 options.IndentSize     (1,1) uint8                        = 0
                 options.Figure                      {mustBeFigureOrEmpty} = []
+                options.ProgressFcn             {mustBeFunctionHandleOrEmpty} = []
+                options.CancelRequestedFcn      {mustBeFunctionHandleOrEmpty} = []
             end
             nameValues = namedargs2cell(options);
             obj@webprogress.FileTransferProgressMonitor(nameValues{:}, ...

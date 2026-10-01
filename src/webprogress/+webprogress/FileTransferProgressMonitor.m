@@ -10,7 +10,8 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
 %       progressMonitorFcn = @(varargin) webprogress.FileTransferProgressMonitor(monitorOptions{:})
 %
 %   Supported options:
-%       DisplayMode     : Where to display progress. Options: 'Dialog Box' (default) or 'Command Window'
+%       DisplayMode     : Where to display progress. Options: 'Dialog Box' (default), 'Command Window'
+%                         or 'None', which displays nothing and leaves the progress to ProgressFcn.
 %       UpdateInterval  : Interval (in seconds) for updating progress. Default = 1 second.
 %       Filename        : Name of transferred file. If provided, filename is displayed during download/upload.
 %       IndentSize      : Size of indentation if displaying progress in command window. Default = 0.
@@ -19,6 +20,16 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
 %       StartBytes      : Bytes of the file transferred before this transfer, such as the part of
 %                         a resumed download already on disk. Default = 0. It can be changed until
 %                         the body starts to arrive.
+%       ProgressFcn     : Function called with the progress, as ProgressFcn(PROGRESS), at most
+%                         once per UpdateInterval and once more when the transfer is done.
+%                         PROGRESS is a struct with the fields
+%                           ActionName       - "Upload" or "Download"
+%                           TransferredBytes - Bytes of the file transferred so far, including
+%                                              StartBytes
+%                           TotalBytes       - Size of the file in bytes, or NaN when unknown
+%                         It is called whatever the DisplayMode. Default = [].
+%       CancelRequestedFcn : Function that returns true when the transfer should stop, called as
+%                         CancelRequestedFcn() at most once per UpdateInterval. Default = [].
 
 %   Inspired by example in matlab.net.http.ProgressMonitor
 %
@@ -31,6 +42,8 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
         IndentSize = 0              % Size of indentation (number of spaces) if displaying progress in command window.
         Figure = []                 % Parent figure for uiprogressdlg.
         FileSizeBytes = nan         % Known file size when ProgressMonitor.Max is not available.
+        ProgressFcn = []            % Function called with the progress of the transfer.
+        CancelRequestedFcn = []     % Function that returns true when the transfer should stop.
     end
 
     properties % User setting that can change until the body arrives
@@ -84,6 +97,8 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
                 options.Figure                      {mustBeFigureOrEmpty} = []
                 options.FileSizeBytes  (1,1) double                       = nan
                 options.StartBytes     (1,1) double {mustBeNonnegative}   = 0
+                options.ProgressFcn             {mustBeFunctionHandleOrEmpty} = []
+                options.CancelRequestedFcn      {mustBeFunctionHandleOrEmpty} = []
             end
 
             for optionName = string(fieldnames(options))'
@@ -103,6 +118,12 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
         end
         
         function done(obj)
+            % Updates are throttled, so the last bytes of a transfer may
+            % not have been reported yet.
+            if obj.HasDisplayedProgress && ~obj.WasCancelled
+                obj.reportProgress()
+            end
+
             if ~isempty(obj.ProgressDialogHandle)
                 obj.closeProgressDialog();
             elseif ~isempty(obj.WaitbarHandle)
@@ -255,6 +276,8 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
                     return
                 end
 
+                obj.reportProgress()
+
                 if isempty(obj.ProgressDialogHandle) && obj.UseUIProgressDialog
                     obj.ProgressDialogHandle = uiprogressdlg(obj.Figure, ...
                         'Title', obj.getProgressTitle(), ...
@@ -285,7 +308,7 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
                         obj.updateProgressDialog(progressValue, msg);
                     elseif obj.UseWaitbarDialog
                         obj.updateWaitbar(progressValue, msg);
-                    else
+                    elseif obj.UseCommandWindow
                         obj.updateCommandWindowMessage(msg)
                     end
                 end
@@ -371,8 +394,24 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
 
         function tf = cancelWasRequested(obj)
         %cancelWasRequested - Return whether the user pressed Cancel
+        %   or CancelRequestedFcn asks for the transfer to stop
             tf = obj.progressDialogIsValid() ...
                 && obj.ProgressDialogHandle.CancelRequested;
+            if ~tf && ~isempty(obj.CancelRequestedFcn)
+                tf = obj.CancelRequestedFcn();
+            end
+        end
+
+        function reportProgress(obj)
+        %reportProgress - Pass the progress of the transfer to ProgressFcn
+            if isempty(obj.ProgressFcn)
+                return
+            end
+            progress = struct( ...
+                'ActionName', obj.ActionName, ...
+                'TransferredBytes', obj.getTransferredBytes(), ...
+                'TotalBytes', double(obj.getFileSizeBytes()));
+            obj.ProgressFcn(progress)
         end
 
         function tf = progressDialogIsValid(obj)

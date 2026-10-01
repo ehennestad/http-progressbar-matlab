@@ -20,6 +20,8 @@ function savedFilePath = download(targetPath, url, options)
 %   progress is shown. MODE must be:
 %       "Dialog Box"     - (default) Shows progress in a dialog box.
 %       "Command Window" - Prints progress in the Command Window.
+%       "None"           - Shows nothing. Use it with ProgressFcn to show
+%                          progress in a display of your own.
 %
 %   [...] = webprogress.download(...,UpdateInterval=SECONDS) specifies
 %   the minimum number of seconds between progress updates. The default
@@ -43,6 +45,20 @@ function savedFilePath = download(targetPath, url, options)
 %
 %   [...] = webprogress.download(...,FileSizeBytes=N) specifies the file
 %   size in bytes to use for progress when the server does not report it.
+%
+%   [...] = webprogress.download(...,ProgressFcn=FCN) calls FCN with the
+%   progress of the download, at most once per UpdateInterval and once
+%   more when it is done. FCN receives a struct with the fields
+%   ActionName ("Download"), TransferredBytes and TotalBytes. Both byte
+%   counts include the part of a resumed download already received.
+%   TotalBytes is NaN when the size is unknown.
+%
+%   [...] = webprogress.download(...,CancelRequestedFcn=FCN) calls FCN
+%   before the download and at most once per UpdateInterval while it
+%   runs. When FCN returns true, the download stops and
+%   webprogress.download raises the error webprogress:download:Cancelled.
+%   No file is saved, but with Resume=true the part received so far is
+%   kept, so a later call can continue from it.
 %
 %   [...] = webprogress.download(...,Resume=TF) keeps the part of the file
 %   received so far when the download fails or is interrupted, and
@@ -87,7 +103,12 @@ function savedFilePath = download(targetPath, url, options)
         options.Figure         {mustBeFigureOrEmpty}             = []
         options.FileSizeBytes  (1,1) double                      = nan
         options.Resume         (1,1) logical                     = false
+        options.ProgressFcn    {mustBeFunctionHandleOrEmpty}     = []
+        options.CancelRequestedFcn {mustBeFunctionHandleOrEmpty} = []
     end
+
+    isCancelRequested = options.CancelRequestedFcn;
+    raiseIfCancelled(isCancelRequested)
 
     % The URL is already percent-encoded, as any URL handed out by a web
     % service is. Without 'literal' the URI constructor would encode it a
@@ -111,7 +132,9 @@ function savedFilePath = download(targetPath, url, options)
         'Filename', filename, ...
         'IndentSize', options.IndentSize, ...
         'Figure', options.Figure, ...
-        'FileSizeBytes', options.FileSizeBytes };
+        'FileSizeBytes', options.FileSizeBytes, ...
+        'ProgressFcn', options.ProgressFcn, ...
+        'CancelRequestedFcn', options.CancelRequestedFcn };
     
     isFolderTarget = isfolder(targetPath);
     if isFolderTarget
@@ -142,7 +165,7 @@ function savedFilePath = download(targetPath, url, options)
         targetName = string(name) + string(ext);
         receivedFile = string(fullfile(targetFolder, targetName)) + ".part";
         stateFile = receivedFile + ".json";
-        receiveResumable(uri, receivedFile, stateFile, monitorOpts)
+        receiveResumable(uri, receivedFile, stateFile, monitorOpts, isCancelRequested)
     else
         % Receive the file in a temporary file that replaces the target
         % only after a successful download, so an existing file survives a
@@ -163,7 +186,7 @@ function savedFilePath = download(targetPath, url, options)
         method = matlab.net.http.RequestMethod.GET;
         req = matlab.net.http.RequestMessage(method, [], []);
 
-        [resp, ~, ~] = req.send(uri, webOpts, consumer);
+        resp = sendRequest(req, uri, webOpts, consumer, isCancelRequested);
 
         if resp.StatusCode.getClass() ~= matlab.net.http.StatusClass.Successful
             raiseRequestFailed(resp)
@@ -217,6 +240,28 @@ function webOpts = createHttpOptions(progressMonitorFcn)
         'ConnectTimeout', 20);
 end
 
+function response = sendRequest(req, uri, webOpts, consumer, isCancelRequested)
+    %sendRequest - Send a request, and raise an error if it was cancelled
+    %   A cancelled transfer either errors or returns a response whose
+    %   body was cut off, depending on when the HTTP stack acts on the
+    %   abort. Either way the caller gets the Cancelled error.
+    try
+        response = req.send(uri, webOpts, consumer);
+    catch exception
+        raiseIfCancelled(isCancelRequested)
+        rethrow(exception)
+    end
+    raiseIfCancelled(isCancelRequested)
+end
+
+function raiseIfCancelled(isCancelRequested)
+    %raiseIfCancelled - Raise an error if CancelRequestedFcn asks to stop
+    if ~isempty(isCancelRequested) && isCancelRequested()
+        error("webprogress:download:Cancelled", ...
+            "The download was cancelled.")
+    end
+end
+
 function raiseRequestFailed(response)
     %raiseRequestFailed - Raise the error for a response with a failed status
     error("webprogress:download:RequestFailed", ...
@@ -225,7 +270,7 @@ function raiseRequestFailed(response)
         string(response.StatusLine))
 end
 
-function receiveResumable(uri, partialFile, stateFile, monitorOpts)
+function receiveResumable(uri, partialFile, stateFile, monitorOpts, isCancelRequested)
     %receiveResumable - Receive a file into a partial file that survives failures
     %   The request asks for the bytes after those in partialFile when
     %   stateFile holds the strong entity tag of the file they came from.
@@ -246,7 +291,7 @@ function receiveResumable(uri, partialFile, stateFile, monitorOpts)
     isRestartRequired = false;
     try
         [response, consumer] = sendResumableRequest(uri, partialFile, stateFile, ...
-            offset, entityTag, totalBytes, monitorOpts);
+            offset, entityTag, totalBytes, monitorOpts, isCancelRequested);
     catch exception
         if exception.identifier ~= "webprogress:download:RestartRequired"
             rethrow(exception)
@@ -269,7 +314,7 @@ function receiveResumable(uri, partialFile, stateFile, monitorOpts)
         deleteIfFile(partialFile)
         deleteIfFile(stateFile)
         [response, consumer] = sendResumableRequest(uri, partialFile, stateFile, ...
-            0, "", nan, monitorOpts);
+            0, "", nan, monitorOpts, isCancelRequested);
     end
 
     if ~any(double(response.StatusCode) == [200, 206])
@@ -280,7 +325,7 @@ function receiveResumable(uri, partialFile, stateFile, monitorOpts)
 end
 
 function [response, consumer] = sendResumableRequest(uri, partialFile, stateFile, ...
-        offset, entityTag, totalBytes, monitorOpts)
+        offset, entityTag, totalBytes, monitorOpts, isCancelRequested)
     %sendResumableRequest - Send a GET request for the bytes from offset onward
     %   An offset of 0 asks for the whole file. Accept-Encoding asks for
     %   the file without a content coding, because a byte range counts
@@ -301,7 +346,7 @@ function [response, consumer] = sendResumableRequest(uri, partialFile, stateFile
     method = matlab.net.http.RequestMethod.GET;
     req = matlab.net.http.RequestMessage(method, fields, []);
 
-    response = req.send(uri, webOpts, consumer);
+    response = sendRequest(req, uri, webOpts, consumer, isCancelRequested);
 end
 
 function monitor = createResumeMonitor(consumer, monitorOpts)
