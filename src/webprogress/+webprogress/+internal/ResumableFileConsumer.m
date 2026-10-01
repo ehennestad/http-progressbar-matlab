@@ -1,26 +1,34 @@
 classdef ResumableFileConsumer < matlab.net.http.io.FileConsumer
 %ResumableFileConsumer - Write a response body to a partial file that can be resumed
 %   consumer = webprogress.internal.ResumableFileConsumer(PARTFILE,
-%   STATEFILE, OFFSET) writes the body of a response to PARTFILE. OFFSET
-%   is the start of the byte range that the request asked for, or 0 for a
-%   request without a Range header. The file consumer appends the body
-%   to PARTFILE, and the response status decides what happens first:
-%       206 - The body is appended to PARTFILE when the Content-Range of
-%             the response starts at OFFSET and the body has no content
-%             coding. Otherwise the consumer raises an error, which ends
-%             the transfer before the body is received.
+%   STATEFILE, OFFSET, ETAG, TOTALBYTES) writes the body of a response to
+%   PARTFILE. OFFSET is the start of the byte range that the request asked
+%   for, or 0 for a request without a Range header. ETAG and TOTALBYTES
+%   are the entity tag and length of the file the bytes in PARTFILE came
+%   from, as saved in STATEFILE, or "" and NaN for a request without a
+%   Range header. The file consumer appends the body to PARTFILE, and the
+%   response status decides what happens first:
+%       206 - The body is appended to PARTFILE when the response carries
+%             the entity tag ETAG, its Content-Range starts at OFFSET and
+%             gives TOTALBYTES or an unknown length, and the body has no
+%             content coding. A different entity tag, start or length
+%             raises the error webprogress:download:RestartRequired,
+%             which ends the transfer before the body is received, so
+%             that the caller can download the file from the beginning.
 %       200 - PARTFILE is replaced by the body, and STATEFILE is written
-%             with the validator and length of the new response.
-%   A response with any other status leaves both files unchanged, and
-%   its body goes to the response message as without a consumer.
+%             with the entity tag and length of the new response, or
+%             deleted when the response has no strong entity tag.
+%   A body with a content coding raises an error for either status. A
+%   response with any other status leaves both files unchanged, and its
+%   body goes to the response message as without a consumer.
 %
 %   After the response, ExpectedBytes is the size PARTFILE has when the
 %   whole body arrived, and TotalBytes is the length of the complete
 %   file. Each is NaN when the response does not give it.
 %
-%   STATEFILE holds the strong validator of the file, as ETag or
-%   Last-Modified, and its total length. It never holds the URL, which
-%   for a presigned URL carries a signature.
+%   STATEFILE holds the strong entity tag of the file and its total
+%   length. It never holds the URL, which for a presigned URL carries a
+%   signature.
 %
 %   This class is used by webprogress.download.
 
@@ -28,8 +36,10 @@ classdef ResumableFileConsumer < matlab.net.http.io.FileConsumer
 
     properties (SetAccess = immutable)
         PartFilePath  string % File that receives the body
-        StateFilePath string % File that holds the validator and total length
+        StateFilePath string % File that holds the entity tag and total length
         RequestedOffset (1,1) double % Start of the requested byte range
+        ExpectedETag string          % Entity tag of the file the partial file belongs to
+        ExpectedTotalBytes (1,1) double % Length of the file the partial file belongs to
     end
 
     properties (SetAccess = private)
@@ -45,11 +55,14 @@ classdef ResumableFileConsumer < matlab.net.http.io.FileConsumer
     end
 
     methods
-        function obj = ResumableFileConsumer(partFilePath, stateFilePath, requestedOffset)
+        function obj = ResumableFileConsumer(partFilePath, stateFilePath, ...
+                requestedOffset, expectedETag, expectedTotalBytes)
             arguments
-                partFilePath    (1,1) string
-                stateFilePath   (1,1) string
-                requestedOffset (1,1) double {mustBeNonnegative, mustBeInteger}
+                partFilePath       (1,1) string
+                stateFilePath      (1,1) string
+                requestedOffset    (1,1) double {mustBeNonnegative, mustBeInteger}
+                expectedETag       (1,1) string
+                expectedTotalBytes (1,1) double
             end
             % Permission 'a' appends to an existing file, and initialize
             % empties the file first when the body replaces it.
@@ -57,6 +70,8 @@ classdef ResumableFileConsumer < matlab.net.http.io.FileConsumer
             obj.PartFilePath = partFilePath;
             obj.StateFilePath = stateFilePath;
             obj.RequestedOffset = requestedOffset;
+            obj.ExpectedETag = expectedETag;
+            obj.ExpectedTotalBytes = expectedTotalBytes;
         end
     end
 
@@ -66,54 +81,49 @@ classdef ResumableFileConsumer < matlab.net.http.io.FileConsumer
         %   MATLAB calls initialize when the response header arrives, and
         %   sends the body to putData only when it returns true. The file
         %   consumer accepts a body whatever the status, so its decision
-        %   counts only for a status whose body belongs in the file.
+        %   counts only for a status whose body belongs in the file. An
+        %   error raised here ends the transfer, so the body is not
+        %   received into memory as a refused body would be.
             response = obj.Response;
             statusCode = double(response.StatusCode);
             ok = false;
 
+            if ~any(statusCode == [200, 206])
+                return
+            end
+
+            % A byte range applies to the representation as it is sent,
+            % after any content coding (RFC 9110, sections 8.4 and 14.1),
+            % and the HTTP client decodes the body while it is saved. The
+            % request asks for no coding, so a coded body is not expected
+            % for either status, and the saved size of such a body could
+            % not be checked or continued.
+            if ~webprogress.internal.hasIdentityEncoding(response)
+                error("webprogress:download:ContentEncoded", ...
+                    "Cannot save the download because the server sent the file in a " + ...
+                    "compressed form, which cannot be resumed. Download it without " + ...
+                    "Resume=true.")
+            end
+
             if statusCode == 206
-                % A 206 response to a single range carries Content-Range
-                % (RFC 9110, section 15.3.7). The body cannot be appended
-                % when it starts elsewhere than the partial file ends. An
-                % error here ends the transfer, so the body is not
-                % received into memory as a refused body would be.
-                [firstByte, lastByte, completeLength] = ...
+                obj.assertContinuesPartialFile(response)
+                [~, lastByte, completeLength] = ...
                     webprogress.internal.parseContentRange(response);
-                if firstByte ~= obj.RequestedOffset
-                    obj.raiseUnexpectedRange(sprintf( ...
-                        "The server sent the file from byte %d instead of byte %d.", ...
-                        firstByte, obj.RequestedOffset))
-                end
-                % A byte range applies to the representation as it is
-                % sent, after any content coding (RFC 9110, sections 8.4
-                % and 14.1). A decoded body cannot be appended at an
-                % offset counted in encoded bytes.
-                if ~webprogress.internal.hasIdentityEncoding(response)
-                    obj.raiseUnexpectedRange("The server sent the part of the file " + ...
-                        "in a compressed form, which cannot be appended to the partial file.")
-                end
                 obj.WriteOffset = obj.RequestedOffset;
                 obj.ExpectedBytes = lastByte + 1;
                 obj.TotalBytes = completeLength;
-                ok = initialize@matlab.net.http.io.FileConsumer(obj);
-
-            elseif statusCode == 200
-                % Content-Length counts the bytes as sent, so it is the
-                % file size only for a body without a content coding.
-                totalBytes = nan;
-                if webprogress.internal.hasIdentityEncoding(response)
-                    totalBytes = webprogress.internal.getDeclaredLength(response);
-                end
+            else
+                totalBytes = webprogress.internal.getDeclaredLength(response);
                 % Replace the partial file before the state file, so that
                 % an interruption between the two never pairs old data
-                % with the validator of a new file.
+                % with the entity tag of a new file.
                 fclose(openFile(obj.PartFilePath, 'w'));
                 obj.WriteOffset = 0;
                 obj.ExpectedBytes = totalBytes;
                 obj.TotalBytes = totalBytes;
                 obj.writeState(response)
-                ok = initialize@matlab.net.http.io.FileConsumer(obj);
             end
+            ok = initialize@matlab.net.http.io.FileConsumer(obj);
 
             monitor = obj.ProgressMonitor;
             if ok && ~isempty(monitor) && isvalid(monitor)
@@ -123,32 +133,52 @@ classdef ResumableFileConsumer < matlab.net.http.io.FileConsumer
     end
 
     methods (Access = private)
-        function raiseUnexpectedRange(obj, reason)
-        %raiseUnexpectedRange - Raise the error for a 206 response that cannot be appended
-            error("webprogress:download:UnexpectedRange", ...
-                "Cannot resume the download. %s The partial file ""%s"" was left " + ...
-                "unchanged. Delete it to download the file from the beginning.", ...
-                reason, obj.PartFilePath)
+        function assertContinuesPartialFile(obj, response)
+        %assertContinuesPartialFile - Raise an error if a 206 response does not continue the file
+        %   The server may ignore If-Range and send a range of a changed
+        %   file, so the entity tag of the response is compared with the
+        %   saved one. A 206 response to a single range carries
+        %   Content-Range (RFC 9110, section 15.3.7), which must start
+        %   where the partial file ends and, when it gives the complete
+        %   length, give the saved one.
+            entityTag = getStrongETag(response);
+            if entityTag ~= obj.ExpectedETag
+                obj.raiseRestartRequired("The file on the server has changed.")
+            end
+
+            [firstByte, ~, completeLength] = ...
+                webprogress.internal.parseContentRange(response);
+            if firstByte ~= obj.RequestedOffset
+                obj.raiseRestartRequired(sprintf( ...
+                    "The server sent the file from byte %d instead of byte %d.", ...
+                    firstByte, obj.RequestedOffset))
+            end
+            if ~isnan(completeLength) && completeLength ~= obj.ExpectedTotalBytes
+                obj.raiseRestartRequired(sprintf( ...
+                    "The file on the server has %d bytes instead of %d.", ...
+                    completeLength, obj.ExpectedTotalBytes))
+            end
+        end
+
+        function raiseRestartRequired(obj, reason)
+        %raiseRestartRequired - Raise the error that tells the caller to start over
+            error("webprogress:download:RestartRequired", ...
+                "The partial file ""%s"" cannot be continued. %s", obj.PartFilePath, reason)
         end
 
         function writeState(obj, response)
-        %writeState - Save the validator and length of a 200 response
-        %   Without a strong validator, or for a body that was decoded
-        %   from a content coding, the partial file cannot be resumed, so
-        %   no state file is kept.
-            validator = "";
-            if webprogress.internal.hasIdentityEncoding(response)
-                validator = getStrongValidator(response);
-            end
-
-            if strlength(validator) == 0
+        %writeState - Save the entity tag and length of a 200 response
+        %   Without a strong entity tag the partial file cannot be
+        %   resumed, so no state file is kept.
+            entityTag = getStrongETag(response);
+            if strlength(entityTag) == 0
                 if isfile(obj.StateFilePath)
                     delete(obj.StateFilePath)
                 end
                 return
             end
 
-            state = struct('Validator', validator, 'TotalBytes', obj.TotalBytes);
+            state = struct('ETag', entityTag, 'TotalBytes', obj.TotalBytes);
             fileId = openFile(obj.StateFilePath, 'w');
             fileCleanup = onCleanup(@() fclose(fileId));
             fwrite(fileId, jsonencode(state), 'char');
@@ -165,45 +195,18 @@ function fileId = openFile(filePath, permission)
     end
 end
 
-function validator = getStrongValidator(response)
-    %getStrongValidator - Return a validator that If-Range can carry, or ""
-    %   If-Range needs a strong validator (RFC 9110, section 13.1.5). An
-    %   entity tag is weak when it starts with "W/" (section 8.8.3). A
-    %   Last-Modified date is used only without an entity tag, and only
-    %   when it is strong: at least one second before the Date of the
-    %   response (section 8.8.2.2).
-    validator = "";
-
+function entityTag = getStrongETag(response)
+    %getStrongETag - Return the strong entity tag of a response, or ""
+    %   An entity tag is weak when it starts with "W/" (RFC 9110, section
+    %   8.8.3). Only a strong one tells that two responses carry the same
+    %   bytes, which If-Range needs (section 13.1.5).
+    entityTag = "";
     tagField = response.getFields("ETag");
-    if ~isempty(tagField)
-        entityTag = strtrim(string(tagField(end).Value));
-        if ~startsWith(entityTag, "W/")
-            validator = entityTag;
-        end
+    if isempty(tagField)
         return
     end
-
-    modifiedField = response.getFields("Last-Modified");
-    dateField = response.getFields("Date");
-    if isempty(modifiedField) || isempty(dateField)
-        return
-    end
-    lastModified = strtrim(string(modifiedField(end).Value));
-    modifiedTime = parseHttpDate(lastModified);
-    responseTime = parseHttpDate(strtrim(string(dateField(end).Value)));
-    if seconds(responseTime - modifiedTime) >= 1
-        validator = lastModified;
-    end
-end
-
-function time = parseHttpDate(text)
-    %parseHttpDate - Convert an IMF-fixdate such as "Sun, 06 Nov 1994 08:49:37 GMT"
-    %   Senders must generate this format (RFC 9110, section 5.6.7). Text
-    %   in another format gives NaT, which fails every comparison.
-    try
-        time = datetime(text, 'InputFormat', 'eee, dd MMM yyyy HH:mm:ss ''GMT''', ...
-            'Locale', 'en_US', 'TimeZone', 'UTC');
-    catch
-        time = NaT('TimeZone', 'UTC');
+    value = strtrim(string(tagField(end).Value));
+    if ~startsWith(value, "W/")
+        entityTag = value;
     end
 end
