@@ -52,8 +52,8 @@ classdef MultipartProgressMonitor < webprogress.FileTransferProgressMonitor
     end
 
     properties (Access = private)
-        IsClosing = false     % Whether done should close the display
-        IsPartCounted = false % Whether Value is already included in CompletedBytes
+        IsClosing = false % Whether done should close the display
+        PartBytes = 0     % Bytes sent of the part in progress
     end
 
     methods
@@ -85,7 +85,7 @@ classdef MultipartProgressMonitor < webprogress.FileTransferProgressMonitor
         %close - Close the dialog or print the completion message
         %   The completion message counts the parts that were sent
         %   successfully, and leaves out a last part that failed.
-            obj.IsPartCounted = true;
+            obj.PartBytes = 0;
             obj.IsClosing = true;
             obj.done()
         end
@@ -98,7 +98,7 @@ classdef MultipartProgressMonitor < webprogress.FileTransferProgressMonitor
                 numBytes (1,1) double {mustBeNonnegative}
             end
             obj.StartBytes = obj.StartBytes + numBytes;
-            obj.IsPartCounted = true;
+            obj.PartBytes = 0;
         end
 
         function completedBytes = get.CompletedBytes(obj)
@@ -114,23 +114,24 @@ classdef MultipartProgressMonitor < webprogress.FileTransferProgressMonitor
         function update(obj, varargin)
         %update - Show the progress of a part as its request is sent
         %   The response to a part does not carry the file, so the bytes
-        %   of its body are not progress. Value counts the bytes of the
-        %   next part once its request reports them.
+        %   of its body are not progress. A Cancel pressed while the
+        %   response arrives still has to be noticed, because the
+        %   progress dialog only reports it when the monitor asks.
             if isequal(obj.Direction, matlab.net.http.MessageType.Response)
+                if obj.cancelWasRequested()
+                    obj.cancelTransfer();
+                end
                 return
             end
-            obj.IsPartCounted = false;
+            if ~isempty(obj.Value)
+                obj.PartBytes = double(obj.Value);
+            end
             update@webprogress.FileTransferProgressMonitor(obj, varargin{:})
         end
 
         function transferredBytes = getTransferredBytes(obj)
         %getTransferredBytes - Return the completed parts and the part in progress
-        %   Value keeps the size of a part after addCompletedBytes has
-        %   counted it, until the next request reports its first bytes.
-            transferredBytes = obj.StartBytes;
-            if ~obj.IsPartCounted
-                transferredBytes = transferredBytes + double(obj.Value);
-            end
+            transferredBytes = obj.StartBytes + obj.PartBytes;
         end
 
         function fileSizeBytes = getFileSizeBytes(obj)

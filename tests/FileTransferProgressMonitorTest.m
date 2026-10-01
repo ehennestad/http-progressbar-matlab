@@ -177,6 +177,22 @@ classdef FileTransferProgressMonitorTest < matlab.unittest.TestCase
             testCase.verifySubstring(secondPart, 'Uploaded 3 MB/10 MB (30%)')
         end
 
+        function testMultipartIgnoresResponseBytes(testCase)
+            % The response to a part carries no file bytes. Its size must
+            % neither add to the progress nor replace the sent bytes.
+            monitor = webprogress.MultipartProgressMonitor(testCase.FileSizeBytes, ...
+                'DisplayMode', 'Command Window', 'UpdateInterval', 0);
+            monitor.Direction = matlab.net.http.MessageType.Request;
+            captureOutput(@() setValues(monitor, 1 * 2^20));
+
+            monitor.Direction = matlab.net.http.MessageType.Response;
+            output = captureOutput(@() setValues(monitor, 2048));
+
+            testCase.verifyEmpty(output)
+            testCase.verifyEqual(monitor.TransferredMb, 1)
+            testCase.verifyEqual(monitor.PercentTransferred, 10, 'AbsTol', 1e-12)
+        end
+
         function testMultipartDisplayStaysOpenAfterRequest(testCase)
             monitor = webprogress.MultipartProgressMonitor(testCase.FileSizeBytes, ...
                 'DisplayMode', 'Command Window', 'UpdateInterval', 0);

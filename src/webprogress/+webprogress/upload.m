@@ -47,10 +47,11 @@ function [wasSuccess, response] = upload(filePath, url, options)
 %
 %   [...] = webprogress.upload(...,NumBytes=N) sends N bytes of the file.
 %   The default is Inf, which sends the file to its end. With Offset or
-%   NumBytes, the body has no Content-Type, and the request carries no
-%   header that names the range. Add the headers that the service
-%   expects with RequestMessage. Use them to send one part of a file
-%   that a storage service receives in several requests.
+%   NumBytes, the request carries no header that names the range, and
+%   the Content-Type is not taken from the file. Add the headers that
+%   the service expects, such as a Content-Type, with RequestMessage.
+%   Use Offset and NumBytes to send one part of a file that a storage
+%   service receives in several requests.
 %
 %   [...] = webprogress.upload(...,ProgressMonitor=MONITOR) shows
 %   progress in MONITOR, a webprogress.MultipartProgressMonitor, which
@@ -119,10 +120,16 @@ function [wasSuccess, response] = upload(filePath, url, options)
         'UseProgressMonitor', true, ...
         'ConnectTimeout', 20);
 
+    if ~isfile(filePath)
+        error("webprogress:upload:FileNotFound", ...
+            "Cannot upload ""%s"" because there is no such file. Check the path.", filePath)
+    end
     fileInfo = dir(filePath);
     fileSizeBytes = fileInfo.bytes;
     numBytes = min(options.NumBytes, fileSizeBytes - options.Offset);
-    isOffsetPastEnd = options.Offset > fileSizeBytes;
+    % An offset at the end of the file leaves nothing to send, except
+    % for an empty file sent whole.
+    isOffsetPastEnd = options.Offset > 0 && options.Offset >= fileSizeBytes;
     isRangePastEnd = ~isinf(options.NumBytes) && options.Offset + options.NumBytes > fileSizeBytes;
     if isOffsetPastEnd || isRangePastEnd
         error("webprogress:upload:RangeOutsideFile", ...
@@ -131,7 +138,9 @@ function [wasSuccess, response] = upload(filePath, url, options)
             options.NumBytes, options.Offset, filePath, fileSizeBytes)
     end
 
-    if options.Offset == 0 && numBytes == fileSizeBytes
+    % The file provider names the Content-Type after the file, which
+    % suits a whole file but not a part of one.
+    if options.Offset == 0 && isinf(options.NumBytes)
         provider = matlab.net.http.io.FileProvider(filePath);
     else
         provider = webprogress.internal.FileRangeProvider(filePath, options.Offset, numBytes);
