@@ -65,6 +65,19 @@ classdef ResumableFileConsumer < matlab.net.http.io.ContentConsumer
                 obj.FileId = -1;
             end
         end
+
+        function [len, stop] = putData(obj, data)
+        %putData - Append a buffer of the body to the partial file
+        %   Empty data marks the end of the body.
+            stop = false;
+            if isempty(data)
+                obj.closeFile()
+                len = 0;
+                return
+            end
+            fwrite(obj.FileId, data, 'uint8');
+            len = numel(data);
+        end
     end
 
     methods (Access = protected)
@@ -113,19 +126,6 @@ classdef ResumableFileConsumer < matlab.net.http.io.ContentConsumer
             if ok && ~isempty(monitor) && isvalid(monitor)
                 monitor.StartBytes = obj.WriteOffset;
             end
-        end
-
-        function [len, stop] = putData(obj, data)
-        %putData - Append a buffer of the body to the partial file
-        %   Empty data marks the end of the body.
-            stop = false;
-            if isempty(data)
-                obj.closeFile()
-                len = 0;
-                return
-            end
-            fwrite(obj.FileId, data, 'uint8');
-            len = numel(data);
         end
     end
 
