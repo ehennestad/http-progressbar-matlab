@@ -6,6 +6,10 @@ classdef DownloadResumeTest < matlab.unittest.TestCase
     %   continues it. The tests are skipped when python3 or a Unix shell is
     %   unavailable.
 
+    properties (Constant)
+        FirstPartBytes = 20 % Bytes after which the server cuts off a first download
+    end
+
     properties
         ServerUrl string % Address of the local HTTP server
         Folder           % Empty folder that is deleted after each test
@@ -48,7 +52,7 @@ classdef DownloadResumeTest < matlab.unittest.TestCase
 
             testCase.verifyEqual(listFiles(testCase.Folder), ...
                 ["data.txt.part", "data.txt.part.json"])
-            testCase.verifyEqual(fileread(testCase.Target + ".part"), content(1:20))
+            testCase.verifyEqual(fileread(testCase.Target + ".part"), content(1:testCase.FirstPartBytes))
         end
 
         function testResumedDownloadCompletesFile(testCase)
@@ -65,16 +69,17 @@ classdef DownloadResumeTest < matlab.unittest.TestCase
 
         function testResumeAppendsOnlyRemainingBytes(testCase)
             % Both responses carry the same ETag, so the server sends
-            % the second body from byte 20 onward. A download from the
-            % start would give only "b".
+            % the second body from byte FirstPartBytes onward. A download
+            % from the start would give only "b".
             testCase.downloadFirstPart(testCase.fileUrl( ...
                 'content', repmat('a', 1, 50), 'etag', 'e1'))
 
             downloadQuietly(testCase.Target, testCase.fileUrl( ...
                 'content', repmat('b', 1, 50), 'etag', 'e1'));
 
+            numBytes = testCase.FirstPartBytes;
             testCase.verifyEqual(fileread(testCase.Target), ...
-                [repmat('a', 1, 20), repmat('b', 1, 30)])
+                [repmat('a', 1, numBytes), repmat('b', 1, 50 - numBytes)])
         end
 
         function testChangedFileIsDownloadedFromStart(testCase)
@@ -100,25 +105,29 @@ classdef DownloadResumeTest < matlab.unittest.TestCase
         end
 
         function testCompletePartialFileIsNotDownloadedAgain(testCase)
-            % The partial file holds the whole 20-byte file the state file
-            % describes, as after an interruption between the last byte
-            % and the move. The range from byte 20 gets status 416. A
-            % new download would give "b".
+            % The partial file holds the whole file of FirstPartBytes
+            % bytes that the state file describes, as after an
+            % interruption between the last byte and the move. The range
+            % from byte FirstPartBytes gets status 416. A new download
+            % would give "b".
+            numBytes = testCase.FirstPartBytes;
             testCase.downloadFirstPart(testCase.fileUrl( ...
                 'content', repmat('a', 1, 50), 'etag', 'e1'))
-            writeText(testCase.Target + ".part.json", '{"ETag":"\"e1\"","TotalBytes":20}')
+            writeText(testCase.Target + ".part.json", ...
+                sprintf('{"ETag":"\\"e1\\"","TotalBytes":%d}', numBytes))
 
             downloadQuietly(testCase.Target, testCase.fileUrl( ...
-                'content', repmat('b', 1, 20), 'etag', 'e1'));
+                'content', repmat('b', 1, numBytes), 'etag', 'e1'));
 
-            testCase.verifyEqual(fileread(testCase.Target), repmat('a', 1, 20))
+            testCase.verifyEqual(fileread(testCase.Target), repmat('a', 1, numBytes))
             testCase.verifyEqual(listFiles(testCase.Folder), "data.txt")
         end
 
         function testPartialFileLongerThanFileIsDownloadedFromStart(testCase)
-            % The server answers the range from byte 20 with status 416,
-            % and the partial file is shorter than the 50 bytes the state
-            % file describes, so it cannot hold the whole file.
+            % The server answers the range from byte FirstPartBytes with
+            % status 416, and the partial file is shorter than the 50
+            % bytes the state file describes, so it cannot hold the whole
+            % file.
             testCase.downloadFirstPart(testCase.fileUrl( ...
                 'content', repmat('a', 1, 50), 'etag', 'e1'))
 
@@ -189,8 +198,8 @@ classdef DownloadResumeTest < matlab.unittest.TestCase
         end
 
         function testRangeFromWrongByteIsDownloadedFromStart(testCase)
-            % The server answers the range from byte 20 with a 206 that
-            % starts at byte 0, which cannot be appended.
+            % The server answers the range from byte FirstPartBytes with
+            % a 206 that starts at byte 0, which cannot be appended.
             testCase.downloadFirstPart(testCase.fileUrl( ...
                 'content', repmat('a', 1, 50), 'etag', 'e1'))
 
@@ -256,7 +265,8 @@ classdef DownloadResumeTest < matlab.unittest.TestCase
             testCase.assertGreaterThanOrEqual(numel(requests), 2)
             testCase.verifyEqual(requests{end-1}.headers.Accept_Encoding, 'identity')
             testCase.verifyEqual(requests{end}.headers.Accept_Encoding, 'identity')
-            testCase.verifyEqual(requests{end}.headers.Range, 'bytes=20-')
+            testCase.verifyEqual(requests{end}.headers.Range, ...
+                sprintf('bytes=%d-', testCase.FirstPartBytes))
         end
 
         function testFirstFailedRequestLeavesNoFiles(testCase)
@@ -340,7 +350,7 @@ classdef DownloadResumeTest < matlab.unittest.TestCase
             % The second response carries the last 1 MB of a 3 MB file.
             fileSize = 3 * 2^20;
             url = testCase.fileUrl('size', string(fileSize));
-            testCase.downloadFirstPart(url + "&truncate=" + string(2 * 2^20))
+            testCase.downloadFirstPart(url, 2 * 2^20)
 
             % The HTTP stack calls the monitor only once the transfer has
             % lasted a moment, which a local transfer of 1 MB may not.
@@ -379,13 +389,18 @@ classdef DownloadResumeTest < matlab.unittest.TestCase
             end
         end
 
-        function downloadFirstPart(testCase, url)
-            %downloadFirstPart - Download a file the server cuts off after 20 bytes
-            %   An explicit truncate option in url takes the place of 20.
-            if ~contains(url, "truncate=")
-                url = url + "&truncate=20";
+        function downloadFirstPart(testCase, url, numBytes)
+            %downloadFirstPart - Download a file the server cuts off after numBytes bytes
+            %   numBytes is FirstPartBytes by default. The download is the
+            %   setup of the test, so a download that is not cut off
+            %   stops the test.
+            arguments
+                testCase
+                url (1,1) string
+                numBytes (1,1) double = testCase.FirstPartBytes
             end
-            testCase.verifyError(@() downloadQuietly(testCase.Target, url), ...
+            url = url + "&truncate=" + string(numBytes);
+            testCase.assertError(@() downloadQuietly(testCase.Target, url), ...
                 'webprogress:download:IncompleteTransfer')
         end
     end
