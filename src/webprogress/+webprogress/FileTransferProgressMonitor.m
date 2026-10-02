@@ -403,8 +403,8 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
         %   or CancelRequestedFcn asks for the transfer to stop
             tf = obj.progressDialogIsValid() ...
                 && obj.ProgressDialogHandle.CancelRequested;
-            if ~tf && ~isempty(obj.CancelRequestedFcn)
-                tf = obj.CancelRequestedFcn();
+            if ~tf
+                tf = isCancelRequested(obj.CancelRequestedFcn);
             end
         end
 
