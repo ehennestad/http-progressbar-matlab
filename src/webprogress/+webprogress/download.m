@@ -154,7 +154,7 @@ function savedFilePath = download(targetPath, url, options)
         % its own, such as ".txt" for a text/plain response. onCleanup
         % deletes the temporary file when the function exits early,
         % including by an error or Ctrl+C.
-        receivedFile = [tempname(targetFolder), '.part'];
+        receivedFile = string(tempname(targetFolder)) + ".part";
         temporaryFileCleanup = onCleanup(@() deleteIfFile(receivedFile));
         consumer = matlab.net.http.io.FileConsumer(receivedFile);
 
@@ -316,7 +316,8 @@ end
 function [entityTag, totalBytes] = readState(stateFile)
     %readState - Return the entity tag and length saved in a state file
     %   The entity tag is "" and the length NaN when the file is missing
-    %   or cannot be read, as after an interruption while it was written.
+    %   or is not valid JSON, as after an interruption while it was written.
+    %   Any other error, such as a file that cannot be opened, is raised.
     %   A weak entity tag cannot tell whether two responses carry the
     %   same bytes (RFC 9110, section 8.8.3), so it counts as none.
     entityTag = "";
@@ -326,8 +327,11 @@ function [entityTag, totalBytes] = readState(stateFile)
     end
     try
         state = jsondecode(fileread(stateFile));
-    catch
-        return
+    catch exception
+        if startsWith(exception.identifier, "MATLAB:json:")
+            return
+        end
+        rethrow(exception)
     end
     if ~isstruct(state) || ~isfield(state, 'ETag') || ~isfield(state, 'TotalBytes') ...
             || ~(ischar(state.ETag) || isstring(state.ETag)) || ~isnumeric(state.TotalBytes)
