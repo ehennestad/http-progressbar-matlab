@@ -38,6 +38,17 @@ webprogress.download(fullfile(tempdir, "100Mb.dat"), url, ...
 wasSuccess = webprogress.upload("results.mat", uploadUrl);
 ```
 
+To show progress in a display of your own, such as a progress bar in an app, pass a `ProgressFcn`. It receives a struct with the fields `ActionName`, `TransferredBytes` and `TotalBytes`. Set `DisplayMode` to `"None"` to turn off the built-in display, and pass a `CancelRequestedFcn` that returns `true` to stop the transfer:
+
+```matlab
+webprogress.download(fullfile(tempdir, "100Mb.dat"), url, ...
+    "DisplayMode", "None", ...
+    "ProgressFcn", @(p) fprintf("%d of %d bytes\n", p.TransferredBytes, p.TotalBytes), ...
+    "CancelRequestedFcn", @() app.CancelRequested)
+```
+
+A cancelled transfer raises the error `webprogress:download:Cancelled` or `webprogress:upload:Cancelled`.
+
 The download target is saved exactly as given, without an added extension, and replaces an existing file. Give a folder instead of a file path to save under the name the server reports.
 
 Run `progressDialogDemo` to see the waitbar and a progress dialog in an app figure.

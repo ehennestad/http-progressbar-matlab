@@ -10,7 +10,8 @@ classdef (Sealed) MultipartProgressMonitor < webprogress.FileTransferProgressMon
 %
 %   monitor = webprogress.MultipartProgressMonitor(TOTALBYTES,Name=Value)
 %   sets display options:
-%       DisplayMode    - "Dialog Box" (default) or "Command Window".
+%       DisplayMode    - "Dialog Box" (default), "Command Window" or
+%                        "None".
 %       UpdateInterval - Minimum number of seconds between updates. The
 %                        default is 1.
 %       Filename       - Name shown in the progress title. The default
@@ -18,12 +19,16 @@ classdef (Sealed) MultipartProgressMonitor < webprogress.FileTransferProgressMon
 %       IndentSize     - Number of spaces before progress printed in the
 %                        Command Window. The default is 0.
 %       Figure         - Figure for a uiprogressdlg. The default is [].
+%       ProgressFcn    - Function called with the progress of the whole
+%                        file. See webprogress.FileTransferProgressMonitor.
+%       CancelRequestedFcn - Function that returns true when the upload
+%                        should stop. It acts as the Cancel button does.
 %
 %   Call close(monitor) after the last part to close the dialog or to
 %   print the completion message. Deleting the monitor also closes the
-%   dialog. If the user presses Cancel, the current request is aborted
-%   and IsCancelled becomes true, and webprogress.upload raises an error
-%   for each later part.
+%   dialog. If the user presses Cancel, IsCancelled becomes true and
+%   webprogress.upload raises the error webprogress:upload:Cancelled for
+%   the part in progress and for each later part.
 %
 %   Example: Upload a file in parts of 100 MB
 %       fileInfo = dir(filePath);
@@ -62,6 +67,8 @@ classdef (Sealed) MultipartProgressMonitor < webprogress.FileTransferProgressMon
                 options.Filename       (1,1) string                       = ""
                 options.IndentSize     (1,1) uint8                        = 0
                 options.Figure                      {mustBeFigureOrEmpty} = []
+                options.ProgressFcn             {mustBeFunctionHandleOrEmpty} = []
+                options.CancelRequestedFcn      {mustBeFunctionHandleOrEmpty} = []
             end
             nameValues = namedargs2cell(options);
             obj@webprogress.FileTransferProgressMonitor(nameValues{:}, ...
@@ -117,8 +124,8 @@ classdef (Sealed) MultipartProgressMonitor < webprogress.FileTransferProgressMon
         %   response arrives still has to be noticed, because the
         %   progress dialog only reports it when the monitor asks.
             if isequal(obj.Direction, matlab.net.http.MessageType.Response)
-                if obj.cancelWasRequested()
-                    obj.cancelTransfer();
+                if obj.WasCancelled || obj.cancelWasRequested()
+                    obj.stopTransfer()
                 end
                 return
             end

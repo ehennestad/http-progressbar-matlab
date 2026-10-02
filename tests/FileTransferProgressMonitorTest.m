@@ -40,9 +40,11 @@ classdef FileTransferProgressMonitorTest < matlab.unittest.TestCase
 
     methods (TestClassSetup)
         function addSourceToPath(testCase)
-            sourceFolder = fullfile(fileparts(fileparts(mfilename('fullpath'))), ...
-                'src', 'webprogress');
+            testsFolder = fileparts(mfilename('fullpath'));
+            sourceFolder = fullfile(fileparts(testsFolder), 'src', 'webprogress');
             testCase.applyFixture(matlab.unittest.fixtures.PathFixture(sourceFolder));
+            testCase.applyFixture(matlab.unittest.fixtures.PathFixture( ...
+                fullfile(testsFolder, 'fixtures')));
         end
     end
 
@@ -264,6 +266,167 @@ classdef FileTransferProgressMonitorTest < matlab.unittest.TestCase
             testCase.verifySubstring(output, 'Downloaded 10 MB/10 MB (100%). Completed in')
         end
 
+        function testDisplayModeNonePrintsNothing(testCase)
+            monitor = webprogress.FileTransferProgressMonitor( ...
+                'DisplayMode', 'None', 'UpdateInterval', 0, ...
+                'FileSizeBytes', testCase.FileSizeBytes);
+            monitor.Direction = matlab.net.http.MessageType.Response;
+
+            output = captureOutput(@() setValues(monitor, [2, 5, 10] * 2^20));
+            output = [output, captureOutput(@() monitor.done())];
+
+            testCase.verifyEmpty(output)
+        end
+
+        function testProgressFcnReceivesBytes(testCase)
+            spy = TransferCallbackSpy();
+            monitor = createSilentMonitor(testCase.FileSizeBytes, spy);
+            monitor.StartBytes = 4 * 2^20;
+
+            setValues(monitor, [1, 3] * 2^20)
+
+            testCase.verifyNumElements(spy.Reports, 2)
+            testCase.verifyEqual(spy.Reports(1).ActionName, "Download")
+            testCase.verifyEqual(spy.Reports(1).TransferredBytes, 5 * 2^20)
+            testCase.verifyEqual(spy.Reports(2).TransferredBytes, 7 * 2^20)
+            testCase.verifyEqual(spy.Reports(2).TotalBytes, testCase.FileSizeBytes)
+        end
+
+        function testProgressFcnFollowsUpdateInterval(testCase)
+            % The first report is immediate and the next ones wait for
+            % UpdateInterval. done reports the bytes the throttle held
+            % back, so the last report gives the final count.
+            spy = TransferCallbackSpy();
+            monitor = webprogress.FileTransferProgressMonitor( ...
+                'DisplayMode', 'None', 'UpdateInterval', 3600, ...
+                'FileSizeBytes', testCase.FileSizeBytes, ...
+                'ProgressFcn', @spy.record);
+            monitor.Direction = matlab.net.http.MessageType.Response;
+
+            setValues(monitor, [2, 5, 10] * 2^20)
+            numReportsBeforeDone = numel(spy.Reports);
+            monitor.done()
+
+            testCase.verifyEqual(numReportsBeforeDone, 1)
+            testCase.verifyEqual(spy.Reports(end).TransferredBytes, testCase.FileSizeBytes)
+        end
+
+        function testProgressFcnIsCalledWithCommandWindowDisplay(testCase)
+            spy = TransferCallbackSpy();
+            monitor = webprogress.FileTransferProgressMonitor( ...
+                'DisplayMode', 'Command Window', 'UpdateInterval', 0, ...
+                'FileSizeBytes', testCase.FileSizeBytes, ...
+                'ProgressFcn', @spy.record);
+            monitor.Direction = matlab.net.http.MessageType.Response;
+
+            output = captureOutput(@() setValues(monitor, 2 * 2^20));
+
+            testCase.verifySubstring(output, 'Downloaded 2 MB/10 MB (20%)')
+            testCase.verifyNumElements(spy.Reports, 1)
+        end
+
+        function testProgressFcnReportsUnknownSizeAsNaN(testCase)
+            spy = TransferCallbackSpy();
+            monitor = createSilentMonitor(NaN, spy);
+
+            setValues(monitor, 3 * 2^20)
+
+            testCase.verifyEqual(spy.Reports(1).TransferredBytes, 3 * 2^20)
+            testCase.verifyTrue(isnan(spy.Reports(1).TotalBytes))
+        end
+
+        function testDoneWithoutProgressDoesNotReport(testCase)
+            spy = TransferCallbackSpy();
+            monitor = createSilentMonitor(testCase.FileSizeBytes, spy);
+
+            monitor.done()
+
+            testCase.verifyEmpty(spy.Reports)
+        end
+
+        function testCancelRequestedFcnStopsTransfer(testCase)
+            % The spy asks for a stop after the first report. The
+            % next report raises the error that aborts the transfer, and
+            % the monitor reports nothing more, including from done.
+            spy = TransferCallbackSpy(1);
+            monitor = createSilentMonitor(testCase.FileSizeBytes, spy);
+
+            setValues(monitor, 1 * 2^20)
+            testCase.verifyError(@() setValues(monitor, 2 * 2^20), ...
+                'webprogress:progressMonitor:Cancelled')
+            monitor.done()
+
+            testCase.verifyNumElements(spy.Reports, 1)
+            testCase.verifyEqual(spy.NumCancelChecks, 2)
+        end
+
+        function testReportAfterCancelStopsTransfer(testCase)
+            % A cancel can arrive between reports, as from the waitbar's
+            % Cancel button. Every later report stops the transfer.
+            spy = TransferCallbackSpy(1);
+            monitor = createSilentMonitor(testCase.FileSizeBytes, spy);
+            setValues(monitor, 1 * 2^20)
+            testCase.verifyError(@() setValues(monitor, 2 * 2^20), ...
+                'webprogress:progressMonitor:Cancelled')
+
+            testCase.verifyError(@() setValues(monitor, 3 * 2^20), ...
+                'webprogress:progressMonitor:Cancelled')
+            testCase.verifyEqual(spy.NumCancelChecks, 2)
+        end
+
+        function testMultipartProgressFcnCoversWholeFile(testCase)
+            spy = TransferCallbackSpy();
+            monitor = webprogress.MultipartProgressMonitor(testCase.FileSizeBytes, ...
+                'DisplayMode', 'None', 'UpdateInterval', 0, ...
+                'ProgressFcn', @spy.record);
+            monitor.Direction = matlab.net.http.MessageType.Request;
+
+            setValues(monitor, 2 * 2^20)
+            monitor.addCompletedBytes(2 * 2^20);
+            setValues(monitor, 1 * 2^20)
+
+            testCase.verifyEqual(spy.Reports(end).ActionName, "Upload")
+            testCase.verifyEqual(spy.Reports(end).TransferredBytes, 3 * 2^20)
+            testCase.verifyEqual(spy.Reports(end).TotalBytes, testCase.FileSizeBytes)
+        end
+
+        function testMultipartCancelRequestedFcnCancels(testCase)
+            spy = TransferCallbackSpy(1);
+            monitor = webprogress.MultipartProgressMonitor(testCase.FileSizeBytes, ...
+                'DisplayMode', 'None', 'UpdateInterval', 0, ...
+                'ProgressFcn', @spy.record, ...
+                'CancelRequestedFcn', @spy.isCancelRequested);
+            monitor.Direction = matlab.net.http.MessageType.Request;
+            setValues(monitor, 1 * 2^20)
+
+            testCase.verifyError(@() setValues(monitor, 2 * 2^20), ...
+                'webprogress:progressMonitor:Cancelled')
+            testCase.verifyTrue(monitor.IsCancelled)
+        end
+
+        function testMultipartCancelDuringResponseStopsTransfer(testCase)
+            % The response to a part carries no progress, but a cancel
+            % that arrives while it is received must still stop it.
+            spy = TransferCallbackSpy(0);
+            monitor = webprogress.MultipartProgressMonitor(testCase.FileSizeBytes, ...
+                'DisplayMode', 'None', 'UpdateInterval', 0, ...
+                'CancelRequestedFcn', @spy.isCancelRequested);
+            monitor.Direction = matlab.net.http.MessageType.Response;
+
+            testCase.verifyError(@() setValues(monitor, 100), ...
+                'webprogress:progressMonitor:Cancelled')
+            testCase.verifyTrue(monitor.IsCancelled)
+        end
+
+        function testInvalidProgressFcnErrors(testCase)
+            testCase.verifyError( ...
+                @() webprogress.FileTransferProgressMonitor('ProgressFcn', 'disp'), ...
+                'webprogress:validators:InvalidFunctionHandle')
+            testCase.verifyError( ...
+                @() webprogress.FileTransferProgressMonitor('CancelRequestedFcn', true), ...
+                'webprogress:validators:InvalidFunctionHandle')
+        end
+
         function testShortenFilenameKeepsStartAndEnd(testCase)
             filename = '123456789012_middle_part_ABCDEFGHIJKL';
 
@@ -305,11 +468,9 @@ classdef FileTransferProgressMonitorTest < matlab.unittest.TestCase
             testCase.verifyWarningFree(@() setValues(monitor, [500, 2500]))
         end
 
-        function testCancelKeepsTheWaitbarClosed(testCase)
-            % The HTTP stack keeps reporting byte counts for a while after
-            % a cancellation, because it aborts the transfer at its next
-            % opportunity rather than at once. None of those reports may
-            % reopen the waitbar the user has just dismissed.
+        function testWaitbarCancelStopsTransfer(testCase)
+            % The Cancel button closes the waitbar at once, and the next
+            % report stops the transfer without reopening it.
             testCase.assumeNotEqual(getenv('GITHUB_ACTIONS'), 'true', ...
                 'Figures cannot be created on GitHub Actions runners.')
             delete(findWaitbars())
@@ -322,8 +483,10 @@ classdef FileTransferProgressMonitorTest < matlab.unittest.TestCase
             testCase.assumeNumElements(findWaitbars(), 1)
 
             pressCancel(findWaitbars())
-            setValues(monitor, [200, 300])
+            testCase.verifyEmpty(findWaitbars())
 
+            testCase.verifyError(@() setValues(monitor, 200), ...
+                'webprogress:progressMonitor:Cancelled')
             testCase.verifyEmpty(findWaitbars())
         end
     end
@@ -346,6 +509,16 @@ function monitor = createCommandWindowMonitor(fileSizeBytes, filename)
     monitor = webprogress.FileTransferProgressMonitor( ...
         'DisplayMode', 'Command Window', 'UpdateInterval', 0, ...
         'Filename', filename, 'FileSizeBytes', fileSizeBytes);
+    monitor.Direction = matlab.net.http.MessageType.Response;
+end
+
+function monitor = createSilentMonitor(fileSizeBytes, spy)
+    %createSilentMonitor - Create a monitor that reports every update to a spy
+    monitor = webprogress.FileTransferProgressMonitor( ...
+        'DisplayMode', 'None', 'UpdateInterval', 0, ...
+        'FileSizeBytes', fileSizeBytes, ...
+        'ProgressFcn', @spy.record, ...
+        'CancelRequestedFcn', @spy.isCancelRequested);
     monitor.Direction = matlab.net.http.MessageType.Response;
 end
 
