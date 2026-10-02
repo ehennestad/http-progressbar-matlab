@@ -58,7 +58,8 @@ function savedFilePath = download(targetPath, url, options)
 %   runs. When FCN returns true, the download stops and
 %   webprogress.download raises the error webprogress:download:Cancelled.
 %   No file is saved, but with Resume=true the part received so far is
-%   kept, so a later call can continue from it.
+%   kept, so a later call can continue from it. The Cancel button of the
+%   progress dialog stops the download in the same way.
 %
 %   [...] = webprogress.download(...,Resume=TF) keeps the part of the file
 %   received so far when the download fails or is interrupted, and
@@ -242,12 +243,15 @@ end
 
 function response = sendRequest(req, uri, webOpts, consumer, isCancelRequested)
     %sendRequest - Send a request, and raise an error if it was cancelled
-    %   A cancelled transfer either errors or returns a response whose
-    %   body was cut off, depending on when the HTTP stack acts on the
-    %   abort. Either way the caller gets the Cancelled error.
+    %   The progress monitor stops a cancelled transfer with an error. A
+    %   cancel requested after its last report is found once the
+    %   transfer is done. Either way the caller gets the Cancelled error.
     try
         response = req.send(uri, webOpts, consumer);
     catch exception
+        if isCancellation(exception)
+            raiseCancelled()
+        end
         raiseIfCancelled(isCancelRequested)
         rethrow(exception)
     end
@@ -257,9 +261,14 @@ end
 function raiseIfCancelled(isCancelRequested)
     %raiseIfCancelled - Raise an error if CancelRequestedFcn asks to stop
     if ~isempty(isCancelRequested) && isCancelRequested()
-        error("webprogress:download:Cancelled", ...
-            "The download was cancelled.")
+        raiseCancelled()
     end
+end
+
+function raiseCancelled()
+    %raiseCancelled - Raise the error for a cancelled download
+    error("webprogress:download:Cancelled", ...
+        "The download was cancelled.")
 end
 
 function raiseRequestFailed(response)

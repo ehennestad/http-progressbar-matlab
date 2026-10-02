@@ -26,9 +26,9 @@ classdef MultipartProgressMonitor < webprogress.FileTransferProgressMonitor
 %
 %   Call close(monitor) after the last part to close the dialog or to
 %   print the completion message. Deleting the monitor also closes the
-%   dialog. If the user presses Cancel, the current request is aborted
-%   and IsCancelled becomes true, and webprogress.upload raises an error
-%   for each later part.
+%   dialog. If the user presses Cancel, IsCancelled becomes true and
+%   webprogress.upload raises the error webprogress:upload:Cancelled for
+%   the part in progress and for each later part.
 %
 %   Example: Upload a file in parts of 100 MB
 %       fileInfo = dir(filePath);
@@ -125,8 +125,8 @@ classdef MultipartProgressMonitor < webprogress.FileTransferProgressMonitor
         %   response arrives still has to be noticed, because the
         %   progress dialog only reports it when the monitor asks.
             if isequal(obj.Direction, matlab.net.http.MessageType.Response)
-                if obj.cancelWasRequested()
-                    obj.cancelTransfer();
+                if obj.WasCancelled || obj.cancelWasRequested()
+                    obj.stopTransfer()
                 end
                 return
             end
