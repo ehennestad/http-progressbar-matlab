@@ -1,4 +1,4 @@
-classdef FileRangeProvider < matlab.net.http.io.ContentProvider
+classdef (Sealed) FileRangeProvider < matlab.net.http.io.ContentProvider
 %FileRangeProvider - Send a byte range of a file as the body of a request
 %   provider = webprogress.internal.FileRangeProvider(FILENAME, OFFSET,
 %   NUMBYTES) sends NUMBYTES bytes of the file FILENAME, starting OFFSET
@@ -43,6 +43,9 @@ classdef FileRangeProvider < matlab.net.http.io.ContentProvider
         %   request opens the file at the start of the range. A call
         %   after the whole range was given returns no data, so the
         %   range is never sent twice in one request.
+        %
+        %   There is no arguments block, because the HTTP stack calls
+        %   getData once for every buffer of the body.
             if obj.SentBytes >= obj.NumBytes
                 data = uint8.empty;
                 stop = true;
