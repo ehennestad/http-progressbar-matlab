@@ -1,7 +1,7 @@
 classdef ProgressCallbackTest < matlab.unittest.TestCase
     %ProgressCallbackTest - Tests for ProgressFcn and CancelRequestedFcn
     %   The tests transfer files to and from a local server with
-    %   DisplayMode "None", and record the progress with a ProgressRecorder.
+    %   DisplayMode "None", and record the progress with a TransferCallbackSpy.
     %   They are skipped when python3 or a Unix shell is unavailable.
 
     properties (Constant)
@@ -48,59 +48,56 @@ classdef ProgressCallbackTest < matlab.unittest.TestCase
 
     methods (Test)
         function testDownloadReportsWholeFile(testCase)
-            recorder = ProgressRecorder();
+            spy = TransferCallbackSpy();
             target = fullfile(testCase.Folder, 'data.bin');
-            url = testCase.sizedFileUrl(); %#ok<NASGU> used inside evalc
 
-            output = evalc(['webprogress.download(target, url, ', ...
-                '"DisplayMode", "None", "ProgressFcn", @recorder.record);']);
+            output = captureOutput(@() webprogress.download(target, testCase.sizedFileUrl(), ...
+                DisplayMode="None", ProgressFcn=@spy.record));
 
             testCase.verifyEmpty(output)
-            testCase.verifyNotEmpty(recorder.Reports)
-            testCase.verifyEqual([recorder.Reports.ActionName], ...
-                repmat("Download", 1, numel(recorder.Reports)))
-            testCase.verifyEqual(recorder.Reports(end).TransferredBytes, testCase.FileSizeBytes)
-            testCase.verifyEqual(recorder.Reports(end).TotalBytes, testCase.FileSizeBytes)
+            testCase.verifyNotEmpty(spy.Reports)
+            testCase.verifyEqual([spy.Reports.ActionName], ...
+                repmat("Download", 1, numel(spy.Reports)))
+            testCase.verifyEqual(spy.Reports(end).TransferredBytes, testCase.FileSizeBytes)
+            testCase.verifyEqual(spy.Reports(end).TotalBytes, testCase.FileSizeBytes)
         end
 
         function testUploadReportsWholeFile(testCase)
-            recorder = ProgressRecorder();
-            filePath = testCase.FilePath; %#ok<NASGU> used inside evalc
-            url = testCase.statusUrl(201); %#ok<NASGU> used inside evalc
+            spy = TransferCallbackSpy();
 
-            output = evalc(['webprogress.upload(filePath, url, ', ...
-                '"DisplayMode", "None", "ProgressFcn", @recorder.record);']);
+            output = captureOutput(@() webprogress.upload(testCase.FilePath, ...
+                testCase.statusUrl(201), DisplayMode="None", ProgressFcn=@spy.record));
 
             testCase.verifyEmpty(output)
-            testCase.verifyNotEmpty(recorder.Reports)
-            testCase.verifyEqual(recorder.Reports(end).ActionName, "Upload")
-            testCase.verifyEqual(recorder.Reports(end).TransferredBytes, testCase.FileSizeBytes)
-            testCase.verifyEqual(recorder.Reports(end).TotalBytes, testCase.FileSizeBytes)
+            testCase.verifyNotEmpty(spy.Reports)
+            testCase.verifyEqual(spy.Reports(end).ActionName, "Upload")
+            testCase.verifyEqual(spy.Reports(end).TransferredBytes, testCase.FileSizeBytes)
+            testCase.verifyEqual(spy.Reports(end).TotalBytes, testCase.FileSizeBytes)
         end
 
         function testDownloadCancelledBeforeStartSendsNothing(testCase)
-            recorder = ProgressRecorder(0);
+            spy = TransferCallbackSpy(0);
             target = fullfile(testCase.Folder, 'data.bin');
 
             testCase.verifyError(@() webprogress.download(target, testCase.sizedFileUrl(), ...
-                'DisplayMode', 'None', 'CancelRequestedFcn', @recorder.isCancelRequested), ...
+                'DisplayMode', 'None', 'CancelRequestedFcn', @spy.isCancelRequested), ...
                 'webprogress:download:Cancelled')
 
-            testCase.verifyEqual(recorder.NumCancelChecks, 1)
+            testCase.verifyEqual(spy.NumCancelChecks, 1)
             testCase.verifyEqual(listFiles(testCase.Folder), "upload.bin")
         end
 
         function testDownloadCancelledDuringTransferSavesNoFile(testCase)
             % The server pauses after the first byte, so the transfer is
-            % still running when the recorder asks for it to stop.
-            recorder = ProgressRecorder(1);
+            % still running when the spy asks for it to stop.
+            spy = TransferCallbackSpy(1);
             target = fullfile(testCase.Folder, 'data.bin');
             url = testCase.sizedFileUrl("delay", 1);
 
             testCase.verifyError(@() webprogress.download(target, url, ...
                 'DisplayMode', 'None', 'UpdateInterval', 0.001, ...
-                'ProgressFcn', @recorder.record, ...
-                'CancelRequestedFcn', @recorder.isCancelRequested), ...
+                'ProgressFcn', @spy.record, ...
+                'CancelRequestedFcn', @spy.isCancelRequested), ...
                 'webprogress:download:Cancelled')
 
             testCase.verifyEqual(listFiles(testCase.Folder), "upload.bin")
@@ -109,14 +106,14 @@ classdef ProgressCallbackTest < matlab.unittest.TestCase
         function testResumableDownloadCancelledKeepsPartialFile(testCase)
             % The state file is written when the headers arrive, so a
             % cancelled download can be continued with Resume=true.
-            recorder = ProgressRecorder(1);
+            spy = TransferCallbackSpy(1);
             target = fullfile(testCase.Folder, 'data.bin');
             url = testCase.sizedFileUrl("delay", 1);
 
             testCase.verifyError(@() webprogress.download(target, url, ...
                 'DisplayMode', 'None', 'UpdateInterval', 0.001, 'Resume', true, ...
-                'ProgressFcn', @recorder.record, ...
-                'CancelRequestedFcn', @recorder.isCancelRequested), ...
+                'ProgressFcn', @spy.record, ...
+                'CancelRequestedFcn', @spy.isCancelRequested), ...
                 'webprogress:download:Cancelled')
 
             testCase.verifyFalse(isfile(target))
@@ -124,11 +121,11 @@ classdef ProgressCallbackTest < matlab.unittest.TestCase
         end
 
         function testUploadCancelledBeforeStartErrors(testCase)
-            recorder = ProgressRecorder(0);
+            spy = TransferCallbackSpy(0);
 
             testCase.verifyError(@() webprogress.upload(testCase.FilePath, ...
                 testCase.statusUrl(201), 'DisplayMode', 'None', ...
-                'CancelRequestedFcn', @recorder.isCancelRequested), ...
+                'CancelRequestedFcn', @spy.isCancelRequested), ...
                 'webprogress:upload:Cancelled')
         end
 
@@ -136,24 +133,35 @@ classdef ProgressCallbackTest < matlab.unittest.TestCase
             % An unsuccessful status is returned rather than raised when
             % upload has outputs. A cancellation is not a status, so it
             % is raised either way.
-            recorder = ProgressRecorder(0);
+            spy = TransferCallbackSpy(0);
 
             testCase.verifyError(@() uploadWithOutput(testCase.FilePath, ...
-                testCase.statusUrl(201), @recorder.isCancelRequested), ...
+                testCase.statusUrl(201), @spy.isCancelRequested), ...
                 'webprogress:upload:Cancelled')
         end
 
         function testWithoutCancelRequestTransferCompletes(testCase)
-            recorder = ProgressRecorder();
+            spy = TransferCallbackSpy();
             target = fullfile(testCase.Folder, 'data.bin');
 
             webprogress.download(target, testCase.sizedFileUrl(), ...
                 'DisplayMode', 'None', 'UpdateInterval', 0.001, ...
-                'CancelRequestedFcn', @recorder.isCancelRequested);
+                'CancelRequestedFcn', @spy.isCancelRequested);
 
             fileInfo = dir(target);
             testCase.verifyEqual(fileInfo.bytes, testCase.FileSizeBytes)
-            testCase.verifyGreaterThanOrEqual(recorder.NumCancelChecks, 1)
+            testCase.verifyGreaterThanOrEqual(spy.NumCancelChecks, 1)
+        end
+
+        function testCancelRequestedFcnWithNonLogicalResultErrors(testCase)
+            target = fullfile(testCase.Folder, 'data.bin');
+
+            testCase.verifyError(@() webprogress.download(target, testCase.sizedFileUrl(), ...
+                DisplayMode="None", CancelRequestedFcn=@() "yes"), ...
+                'webprogress:validators:InvalidCancelRequestedResult')
+            testCase.verifyError(@() webprogress.upload(testCase.FilePath, ...
+                testCase.statusUrl(201), DisplayMode="None", CancelRequestedFcn=@() [true, true]), ...
+                'webprogress:validators:InvalidCancelRequestedResult')
         end
     end
 
@@ -192,6 +200,11 @@ classdef ProgressCallbackTest < matlab.unittest.TestCase
             url = sprintf("%s/%d", testCase.ServerUrl, statusCode);
         end
     end
+end
+
+function output = captureOutput(fcn) %#ok<INUSD> fcn is called inside evalc
+    %captureOutput - Call a function and return its Command Window output
+    output = evalc('fcn()');
 end
 
 function wasSuccess = uploadWithOutput(filePath, url, cancelRequestedFcn)

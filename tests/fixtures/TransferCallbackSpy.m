@@ -1,10 +1,10 @@
-classdef ProgressRecorder < handle
-    %ProgressRecorder - Record the progress reports a transfer makes
-    %   recorder = ProgressRecorder() records the structs passed to
-    %   recorder.record. Pass @recorder.record as ProgressFcn and
-    %   @recorder.isCancelRequested as CancelRequestedFcn.
+classdef (Sealed) TransferCallbackSpy < handle
+    %TransferCallbackSpy - Test spy for the ProgressFcn and CancelRequestedFcn of a transfer
+    %   spy = TransferCallbackSpy() records the structs passed to
+    %   spy.record. Pass @spy.record as ProgressFcn and
+    %   @spy.isCancelRequested as CancelRequestedFcn.
     %
-    %   recorder = ProgressRecorder(N) asks for the transfer to stop once
+    %   spy = TransferCallbackSpy(N) asks for the transfer to stop once
     %   N reports have been recorded. With N = 0 it asks before the first.
 
     properties (SetAccess = private)
@@ -17,17 +17,20 @@ classdef ProgressRecorder < handle
     end
 
     methods
-        function obj = ProgressRecorder(cancelAfter)
-            if nargin > 0
-                obj.CancelAfter = cancelAfter;
+        function obj = TransferCallbackSpy(cancelAfter)
+            arguments
+                cancelAfter (1,1) double {mustBeNonnegative} = Inf
             end
+            obj.CancelAfter = cancelAfter;
         end
 
         function record(obj, progress)
+            %record - Record one progress report
             obj.Reports(end+1) = progress;
         end
 
         function tf = isCancelRequested(obj)
+            %isCancelRequested - Return true once CancelAfter reports are recorded
             obj.NumCancelChecks = obj.NumCancelChecks + 1;
             tf = numel(obj.Reports) >= obj.CancelAfter;
         end
