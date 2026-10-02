@@ -63,6 +63,7 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
         BodySizeBytes               % Size in bytes of the message that carries the file
         HasDisplayedProgress = false % Whether progress has been displayed at least once
         WasCancelled = false        % Whether the user cancelled the transfer
+        BaselineBytes = []          % Bytes of the file transferred when this monitor saw the first byte
     end
 
     properties (Constant, Access = private)
@@ -187,6 +188,14 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
             % user has already given up on.
             if obj.WasCancelled
                 return
+            end
+
+            % The remaining time is estimated from the bytes this monitor
+            % has seen arrive. A body byte arrives only after a resumed
+            % download has set StartBytes, so StartBytes at that moment
+            % is where the measurement starts.
+            if isempty(obj.BaselineBytes) && ~isempty(obj.Value) && obj.Value > 0
+                obj.BaselineBytes = obj.StartBytes;
             end
 
             % A message without a body reports Max as 0. After an upload,
@@ -469,12 +478,18 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
     
         function str = getRemainingTimeEstimate(obj)
         %getRemainingTimeEstimate - Return the estimated remaining time
-            % The rate is measured over this transfer only, so the
-            % estimate leaves out the StartBytes that were already there.
+            % The rate is measured over the bytes this monitor has seen,
+            % so the estimate leaves out bytes that were transferred
+            % before it started, such as those of a resumed download.
+            baselineBytes = obj.BaselineBytes;
+            if isempty(baselineBytes)
+                baselineBytes = obj.StartBytes;
+            end
             tElapsed = seconds( toc(obj.StartTime) );
-            remainingBytes = double(obj.getFileSizeBytes()) - obj.StartBytes;
-            percentOfThisTransfer = double(obj.Value) / remainingBytes * 100;
-            str = obj.formatRemainingTimeEstimate(tElapsed, percentOfThisTransfer);
+            bytesSinceBaseline = obj.getTransferredBytes() - baselineBytes;
+            bytesAfterBaseline = double(obj.getFileSizeBytes()) - baselineBytes;
+            percentSinceBaseline = bytesSinceBaseline / bytesAfterBaseline * 100;
+            str = obj.formatRemainingTimeEstimate(tElapsed, percentSinceBaseline);
         end
 
         function strMessage = getTransferCompletedMessage(obj)
