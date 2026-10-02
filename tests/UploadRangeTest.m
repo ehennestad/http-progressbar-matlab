@@ -151,10 +151,8 @@ classdef UploadRangeTest < matlab.unittest.TestCase
                 'DisplayMode', 'Command Window', 'UpdateInterval', 0);
             testCase.addTeardown(@() delete(monitor))
 
-            wasSuccess = true;
-            evalc(['wasSuccess = webprogress.upload(testCase.FilePath, ', ...
-                'testCase.ServerUrl + "/500", ''NumBytes'', 1000, ', ...
-                '''ProgressMonitor'', monitor);']);
+            [~, wasSuccess] = captureOutput(@() webprogress.upload(testCase.FilePath, ...
+                testCase.ServerUrl + "/500", NumBytes=1000, ProgressMonitor=monitor));
 
             testCase.verifyFalse(wasSuccess)
             testCase.verifyEqual(monitor.CompletedBytes, 0)
@@ -164,11 +162,8 @@ classdef UploadRangeTest < matlab.unittest.TestCase
     methods (Access = private)
         function echo = uploadToEcho(testCase, varargin)
             %uploadToEcho - Upload to /echo and return the decoded reply
-            response = matlab.net.http.ResponseMessage.empty; %#ok<NASGU> set inside evalc
-            filePath = testCase.FilePath; %#ok<NASGU> used inside evalc
-            url = testCase.ServerUrl + "/echo"; %#ok<NASGU> used inside evalc
-            evalc(['[~, response] = webprogress.upload(filePath, url, ', ...
-                '''DisplayMode'', ''Command Window'', varargin{:});']);
+            [~, ~, response] = captureOutput(@() webprogress.upload(testCase.FilePath, ...
+                testCase.ServerUrl + "/echo", varargin{:}, DisplayMode="Command Window"));
             echo = response.Body.Data;
         end
 
@@ -183,7 +178,10 @@ classdef UploadRangeTest < matlab.unittest.TestCase
     end
 end
 
-function output = captureOutput(fcn) %#ok<INUSD> fcn is called inside evalc
+function [output, varargout] = captureOutput(fcn) %#ok<INUSD> fcn is called inside evalc
     %captureOutput - Call a function and return its Command Window output
-    output = evalc('fcn()');
+    %   [OUTPUT, OUT1, ..., OUTN] = captureOutput(FCN) also returns the
+    %   first N outputs of FCN.
+    varargout = cell(1, nargout - 1);
+    output = evalc("[varargout{1:nargout-1}] = fcn();");
 end

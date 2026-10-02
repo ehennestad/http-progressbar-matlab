@@ -13,6 +13,10 @@ function tf = hasIdentityEncoding(response)
 
 %   Written by Eivind Hennestad
 
+    arguments
+        response (1,1) matlab.net.http.ResponseMessage
+    end
+
     field = response.getFields("Content-Encoding");
     tf = isempty(field) || strcmpi(strtrim(string(field(end).Value)), "identity");
 end
