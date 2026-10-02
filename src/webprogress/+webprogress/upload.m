@@ -121,8 +121,8 @@ function [wasSuccess, response] = upload(filePath, url, options)
     
     monitor = options.ProgressMonitor;
     if isempty(monitor)
-        isCancelRequested = options.CancelRequestedFcn;
-        raiseIfCancelled(isCancelRequested)
+        cancelRequestedFcn = options.CancelRequestedFcn;
+        raiseIfCancelled(cancelRequestedFcn)
         progressMonitorFcn = @(varargin) webprogress.FileTransferProgressMonitor(monitorOpts{:});
     else
         if monitor.IsCancelled
@@ -133,7 +133,7 @@ function [wasSuccess, response] = upload(filePath, url, options)
         % The HTTP stack calls the function for each request, so every
         % part reports to the same monitor.
         progressMonitorFcn = @(varargin) monitor;
-        isCancelRequested = [];
+        cancelRequestedFcn = [];
     end
 
     webOpts = matlab.net.http.HTTPOptions(...
@@ -188,10 +188,10 @@ function [wasSuccess, response] = upload(filePath, url, options)
         if isCancellation(exception)
             raiseCancelled()
         end
-        raiseIfCancelled(isCancelRequested)
+        raiseIfCancelled(cancelRequestedFcn)
         rethrow(exception)
     end
-    raiseIfCancelled(isCancelRequested)
+    raiseIfCancelled(cancelRequestedFcn)
     
     % Servers acknowledge an upload with any 2xx status, for example
     % 201 Created or 204 No Content, not only 200 OK.
@@ -216,9 +216,9 @@ function [wasSuccess, response] = upload(filePath, url, options)
     end
 end
 
-function raiseIfCancelled(isCancelRequested)
+function raiseIfCancelled(cancelRequestedFcn)
     %raiseIfCancelled - Raise an error if CancelRequestedFcn asks to stop
-    if ~isempty(isCancelRequested) && isCancelRequested()
+    if isCancelRequested(cancelRequestedFcn)
         raiseCancelled()
     end
 end
