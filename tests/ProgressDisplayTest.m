@@ -47,8 +47,7 @@ classdef ProgressDisplayTest < matlab.unittest.TestCase
             target = fullfile(testCase.Folder, 'data.txt');
 
             output = captureOutput(@() webprogress.download(target, ...
-                testCase.ServerUrl + "/files/data.txt", ...
-                'DisplayMode', 'Command Window'));
+                testCase.slowFileUrl('data.txt'), 'DisplayMode', 'Command Window'));
 
             testCase.verifySubstring(output, 'Downloaded')
             testCase.verifySubstring(output, 'Completed in')
@@ -58,7 +57,7 @@ classdef ProgressDisplayTest < matlab.unittest.TestCase
             target = fullfile(testCase.Folder, 'data.txt');
 
             output = captureOutput(@() webprogress.download(target, ...
-                testCase.ServerUrl + "/files/data.txt", ...
+                testCase.slowFileUrl('data.txt'), ...
                 'DisplayMode', 'Command Window', 'UpdateInterval', 0.001));
 
             testCase.verifySubstring(output, 'Downloaded')
