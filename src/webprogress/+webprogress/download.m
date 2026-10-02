@@ -154,7 +154,7 @@ function savedFilePath = download(targetPath, url, options)
         % its own, such as ".txt" for a text/plain response. onCleanup
         % deletes the temporary file when the function exits early,
         % including by an error or Ctrl+C.
-        receivedFile = [tempname(targetFolder), '.part'];
+        receivedFile = string(tempname(targetFolder)) + ".part";
         temporaryFileCleanup = onCleanup(@() deleteIfFile(receivedFile));
         consumer = matlab.net.http.io.FileConsumer(receivedFile);
 
