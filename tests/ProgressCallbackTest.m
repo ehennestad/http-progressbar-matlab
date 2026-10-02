@@ -157,6 +157,25 @@ classdef ProgressCallbackTest < matlab.unittest.TestCase
         end
     end
 
+    methods (Test, TestTags = {'Graphical'})
+        function testWaitbarCancelStopsDownload(testCase)
+            % The progress callback presses the waitbar's Cancel button
+            % while the server pauses, as a user would during a transfer.
+            testCase.assumeNotEqual(getenv('GITHUB_ACTIONS'), 'true', ...
+                'Figures cannot be created on GitHub Actions runners.')
+            testCase.addTeardown(@() delete(findWaitbars()))
+            target = fullfile(testCase.Folder, 'data.bin');
+            url = testCase.sizedFileUrl("delay", 1);
+
+            testCase.verifyError(@() webprogress.download(target, url, ...
+                'UpdateInterval', 0.001, 'ProgressFcn', @(~) pressWaitbarCancel()), ...
+                'webprogress:download:Cancelled')
+
+            testCase.verifyEqual(listFiles(testCase.Folder), "upload.bin")
+            testCase.verifyEmpty(findWaitbars())
+        end
+    end
+
     methods (Access = private)
         function url = sizedFileUrl(testCase, varargin)
             %sizedFileUrl - Return the URL of a served file of FileSizeBytes bytes
@@ -179,6 +198,24 @@ function wasSuccess = uploadWithOutput(filePath, url, cancelRequestedFcn)
     %uploadWithOutput - Upload with an output, so a failed status is not raised
     wasSuccess = webprogress.upload(filePath, url, 'DisplayMode', 'None', ...
         'CancelRequestedFcn', cancelRequestedFcn);
+end
+
+function bars = findWaitbars()
+    %findWaitbars - Return the open waitbar figures
+    bars = findall(0, 'Type', 'figure', 'Tag', 'TMWWaitbar');
+end
+
+function pressWaitbarCancel()
+    %pressWaitbarCancel - Press the Cancel button of an open waitbar
+    %   The first report comes before the waitbar opens, so there may be
+    %   none yet.
+    bars = findWaitbars();
+    if isempty(bars)
+        return
+    end
+    button = findall(bars(1), 'Style', 'pushbutton');
+    callback = button(1).Callback;
+    callback(button(1), [])
 end
 
 function names = listFiles(folder)

@@ -30,6 +30,11 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
 %                         It is called whatever the DisplayMode. Default = [].
 %       CancelRequestedFcn : Function that returns true when the transfer should stop, called as
 %                         CancelRequestedFcn() at most once per UpdateInterval. Default = [].
+%
+%   A cancelled transfer, by CancelRequestedFcn or by the Cancel button of
+%   the progress dialog, stops at the next progress report with the error
+%   webprogress:progressMonitor:Cancelled. The HTTP stack passes it on as
+%   the cause of the error MATLAB:http:UncaughtException.
 
 %   Inspired by example in matlab.net.http.ProgressMonitor
 %
@@ -202,13 +207,10 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
         function update(obj, ~)
         %update - Refresh the progress display after Value changes
 
-            % The HTTP stack keeps reporting byte counts for a while
-            % after a cancellation, because it aborts the transfer at
-            % its next opportunity rather than at once. Without this the
-            % next report would open a fresh dialog for a transfer the
-            % user has already given up on.
+            % The Cancel button of the waitbar runs in a UI callback,
+            % which cannot stop the transfer, so the next report does.
             if obj.WasCancelled
-                return
+                obj.stopTransfer()
             end
 
             % The remaining time and the completion message are measured
@@ -275,8 +277,7 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
                 end
 
                 if obj.cancelWasRequested()
-                    obj.cancelTransfer();
-                    return
+                    obj.stopTransfer()
                 end
 
                 obj.reportProgress()
@@ -302,8 +303,7 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
                 % fire before its handle reaches WaitbarHandle and the
                 % close in cancelTransfer finds nothing to close.
                 if obj.WasCancelled
-                    obj.closeWaitbar();
-                    return
+                    obj.stopTransfer()
                 end
 
                 if obj.HasTransferStarted
@@ -350,8 +350,7 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
         function updateProgressDialog(obj, progressValue, msg)
         %updateProgressDialog - Update the value and message of uiprogressdlg
             if obj.cancelWasRequested()
-                obj.cancelTransfer();
-                return
+                obj.stopTransfer()
             end
 
             if ~obj.progressDialogIsValid()
@@ -378,21 +377,25 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
         end
 
         function cancelTransfer(obj)
-        %cancelTransfer - Abort the transfer and close the progress display
-        %   Called when the user presses Cancel or closes the progress
-        %   window. WasCancelled keeps update from opening a new display
-        %   for the byte counts that still arrive before the HTTP stack
-        %   acts on the abort.
+        %cancelTransfer - Mark the transfer as cancelled and close the progress display
+        %   Called when the user presses Cancel or closes the waitbar,
+        %   and by stopTransfer. The transfer itself stops at the next
+        %   progress report.
             obj.WasCancelled = true;
-
-            % CancelFcn is empty until the HTTP stack assigns it, which
-            % it does only for a transfer that the stack itself drives.
-            if ~isempty(obj.CancelFcn)
-                obj.CancelFcn();
-            end
-
             obj.closeProgressDialog();
             obj.closeWaitbar();
+        end
+
+        function stopTransfer(obj)
+        %stopTransfer - Cancel the transfer by raising an error
+        %   The HTTP stack aborts a transfer whose progress monitor raises
+        %   an error, and passes the error on as the cause of
+        %   MATLAB:http:UncaughtException, so a caller can catch it.
+        %   CancelFcn is not used, because it interrupts the whole call
+        %   as Ctrl+C does, which no caller can catch.
+            obj.cancelTransfer();
+            error("webprogress:progressMonitor:Cancelled", ...
+                "The transfer was cancelled.")
         end
 
         function tf = cancelWasRequested(obj)

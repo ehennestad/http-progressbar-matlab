@@ -357,17 +357,34 @@ classdef FileTransferProgressMonitorTest < matlab.unittest.TestCase
             testCase.verifyEmpty(recorder.Reports)
         end
 
-        function testCancelRequestedFcnStopsReports(testCase)
+        function testCancelRequestedFcnStopsTransfer(testCase)
             % The recorder asks for a stop after the first report. The
-            % monitor stops reporting then, including from done.
+            % next report raises the error that aborts the transfer, and
+            % the monitor reports nothing more, including from done.
             recorder = ProgressRecorder(1);
             monitor = createSilentMonitor(testCase.FileSizeBytes, recorder);
 
-            setValues(monitor, [1, 2, 3] * 2^20)
+            setValues(monitor, 1 * 2^20)
+            testCase.verifyError(@() setValues(monitor, 2 * 2^20), ...
+                'webprogress:progressMonitor:Cancelled')
             monitor.done()
 
             testCase.verifyNumElements(recorder.Reports, 1)
-            testCase.verifyGreaterThanOrEqual(recorder.NumCancelChecks, 2)
+            testCase.verifyEqual(recorder.NumCancelChecks, 2)
+        end
+
+        function testReportAfterCancelStopsTransfer(testCase)
+            % A cancel can arrive between reports, as from the waitbar's
+            % Cancel button. Every later report stops the transfer.
+            recorder = ProgressRecorder(1);
+            monitor = createSilentMonitor(testCase.FileSizeBytes, recorder);
+            setValues(monitor, 1 * 2^20)
+            testCase.verifyError(@() setValues(monitor, 2 * 2^20), ...
+                'webprogress:progressMonitor:Cancelled')
+
+            testCase.verifyError(@() setValues(monitor, 3 * 2^20), ...
+                'webprogress:progressMonitor:Cancelled')
+            testCase.verifyEqual(recorder.NumCancelChecks, 2)
         end
 
         function testMultipartProgressFcnCoversWholeFile(testCase)
@@ -393,9 +410,24 @@ classdef FileTransferProgressMonitorTest < matlab.unittest.TestCase
                 'ProgressFcn', @recorder.record, ...
                 'CancelRequestedFcn', @recorder.isCancelRequested);
             monitor.Direction = matlab.net.http.MessageType.Request;
+            setValues(monitor, 1 * 2^20)
 
-            setValues(monitor, [1, 2] * 2^20)
+            testCase.verifyError(@() setValues(monitor, 2 * 2^20), ...
+                'webprogress:progressMonitor:Cancelled')
+            testCase.verifyTrue(monitor.IsCancelled)
+        end
 
+        function testMultipartCancelDuringResponseStopsTransfer(testCase)
+            % The response to a part carries no progress, but a cancel
+            % that arrives while it is received must still stop it.
+            recorder = ProgressRecorder(0);
+            monitor = webprogress.MultipartProgressMonitor(testCase.FileSizeBytes, ...
+                'DisplayMode', 'None', 'UpdateInterval', 0, ...
+                'CancelRequestedFcn', @recorder.isCancelRequested);
+            monitor.Direction = matlab.net.http.MessageType.Response;
+
+            testCase.verifyError(@() setValues(monitor, 100), ...
+                'webprogress:progressMonitor:Cancelled')
             testCase.verifyTrue(monitor.IsCancelled)
         end
 
@@ -449,11 +481,9 @@ classdef FileTransferProgressMonitorTest < matlab.unittest.TestCase
             testCase.verifyWarningFree(@() setValues(monitor, [500, 2500]))
         end
 
-        function testCancelKeepsTheWaitbarClosed(testCase)
-            % The HTTP stack keeps reporting byte counts for a while after
-            % a cancellation, because it aborts the transfer at its next
-            % opportunity rather than at once. None of those reports may
-            % reopen the waitbar the user has just dismissed.
+        function testWaitbarCancelStopsTransfer(testCase)
+            % The Cancel button closes the waitbar at once, and the next
+            % report stops the transfer without reopening it.
             testCase.assumeNotEqual(getenv('GITHUB_ACTIONS'), 'true', ...
                 'Figures cannot be created on GitHub Actions runners.')
             delete(findWaitbars())
@@ -466,8 +496,10 @@ classdef FileTransferProgressMonitorTest < matlab.unittest.TestCase
             testCase.assumeNumElements(findWaitbars(), 1)
 
             pressCancel(findWaitbars())
-            setValues(monitor, [200, 300])
+            testCase.verifyEmpty(findWaitbars())
 
+            testCase.verifyError(@() setValues(monitor, 200), ...
+                'webprogress:progressMonitor:Cancelled')
             testCase.verifyEmpty(findWaitbars())
         end
     end

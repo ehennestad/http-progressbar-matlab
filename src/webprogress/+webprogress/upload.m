@@ -63,7 +63,8 @@ function [wasSuccess, response] = upload(filePath, url, options)
 %   [...] = webprogress.upload(...,CancelRequestedFcn=FCN) calls FCN
 %   before the upload and at most once per UpdateInterval while it runs.
 %   When FCN returns true, the upload stops and webprogress.upload raises
-%   the error webprogress:upload:Cancelled, also when it has outputs.
+%   the error webprogress:upload:Cancelled, also when it has outputs. The
+%   Cancel button of the progress dialog stops the upload in the same way.
 %
 %   [...] = webprogress.upload(...,ProgressMonitor=MONITOR) shows
 %   progress in MONITOR, a webprogress.MultipartProgressMonitor, which
@@ -183,6 +184,10 @@ function [wasSuccess, response] = upload(filePath, url, options)
     try
         [response, ~, ~] = req.send(uri, webOpts);
     catch exception
+        % The progress monitor stops a cancelled transfer with an error.
+        if isCancellation(exception)
+            raiseCancelled()
+        end
         raiseIfCancelled(isCancelRequested)
         rethrow(exception)
     end
@@ -214,9 +219,14 @@ end
 function raiseIfCancelled(isCancelRequested)
     %raiseIfCancelled - Raise an error if CancelRequestedFcn asks to stop
     if ~isempty(isCancelRequested) && isCancelRequested()
-        error("webprogress:upload:Cancelled", ...
-            "The upload was cancelled.")
+        raiseCancelled()
     end
+end
+
+function raiseCancelled()
+    %raiseCancelled - Raise the error for a cancelled upload
+    error("webprogress:upload:Cancelled", ...
+        "The upload was cancelled.")
 end
 
 function mustBeIntegerOrInf(value)
