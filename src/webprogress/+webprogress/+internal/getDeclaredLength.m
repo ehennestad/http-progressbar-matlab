@@ -13,6 +13,10 @@ function declaredBytes = getDeclaredLength(response)
 
 %   Written by Eivind Hennestad
 
+    arguments
+        response (1,1) matlab.net.http.ResponseMessage
+    end
+
     declaredBytes = nan;
 
     lengthFields = response.getFields("Content-Length");

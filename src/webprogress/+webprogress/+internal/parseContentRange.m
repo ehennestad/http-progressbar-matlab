@@ -12,6 +12,10 @@ function [firstByte, lastByte, completeLength] = parseContentRange(response)
 
 %   Written by Eivind Hennestad
 
+    arguments
+        response (1,1) matlab.net.http.ResponseMessage
+    end
+
     firstByte = nan;
     lastByte = nan;
     completeLength = nan;
