@@ -1,4 +1,4 @@
-classdef MultipartProgressMonitor < webprogress.FileTransferProgressMonitor
+classdef (Sealed) MultipartProgressMonitor < webprogress.FileTransferProgressMonitor
 %MultipartProgressMonitor - One progress display for a file sent in several parts
 %   monitor = webprogress.MultipartProgressMonitor(TOTALBYTES) creates a
 %   progress monitor for a file of TOTALBYTES bytes that is uploaded in
@@ -42,18 +42,15 @@ classdef MultipartProgressMonitor < webprogress.FileTransferProgressMonitor
 
 %   Written by Eivind Hennestad
 
-    properties (SetAccess = immutable)
-        TotalBytes (1,1) double % Size of the whole file in bytes
-    end
-
     properties (Dependent)
         CompletedBytes  % Bytes of the parts that were sent successfully
         IsCancelled     % Whether the user cancelled the transfer
     end
 
     properties (Access = private)
-        IsClosing = false % Whether done should close the display
-        PartBytes = 0     % Bytes sent of the part in progress
+        IsClosing = false     % Whether done should close the display
+        PartBytes = 0         % Bytes sent of the part in progress
+        CompletedPartBytes = 0 % Bytes of the parts that were sent successfully
     end
 
     methods
@@ -68,8 +65,7 @@ classdef MultipartProgressMonitor < webprogress.FileTransferProgressMonitor
             end
             nameValues = namedargs2cell(options);
             obj@webprogress.FileTransferProgressMonitor(nameValues{:}, ...
-                'FileSizeBytes', totalBytes);
-            obj.TotalBytes = totalBytes;
+                FileSizeBytes=totalBytes);
         end
 
         function done(obj)
@@ -90,23 +86,26 @@ classdef MultipartProgressMonitor < webprogress.FileTransferProgressMonitor
             obj.done()
         end
 
-        function addCompletedBytes(obj, numBytes)
-        %addCompletedBytes - Count a part that was sent successfully
-        %   webprogress.upload calls this when the server accepts a part.
-            arguments
-                obj
-                numBytes (1,1) double {mustBeNonnegative}
-            end
-            obj.StartBytes = obj.StartBytes + numBytes;
-            obj.PartBytes = 0;
-        end
-
         function completedBytes = get.CompletedBytes(obj)
-            completedBytes = obj.StartBytes;
+            completedBytes = obj.CompletedPartBytes;
         end
 
         function tf = get.IsCancelled(obj)
             tf = obj.WasCancelled;
+        end
+    end
+
+    methods (Hidden)
+        function addCompletedBytes(obj, numBytes)
+        %addCompletedBytes - Count a part that was sent successfully
+        %   webprogress.upload calls this when the server accepts a part.
+        %   It is hidden because it is not meant to be called by users.
+            arguments
+                obj
+                numBytes (1,1) double {mustBeNonnegative}
+            end
+            obj.CompletedPartBytes = obj.CompletedPartBytes + numBytes;
+            obj.PartBytes = 0;
         end
     end
 
@@ -131,13 +130,13 @@ classdef MultipartProgressMonitor < webprogress.FileTransferProgressMonitor
 
         function transferredBytes = getTransferredBytes(obj)
         %getTransferredBytes - Return the completed parts and the part in progress
-            transferredBytes = obj.StartBytes + obj.PartBytes;
+            transferredBytes = obj.CompletedPartBytes + obj.PartBytes;
         end
 
         function fileSizeBytes = getFileSizeBytes(obj)
         %getFileSizeBytes - Return the size of the whole file
         %   The size of each request covers one part only.
-            fileSizeBytes = obj.TotalBytes;
+            fileSizeBytes = obj.FileSizeBytes;
         end
     end
 end
