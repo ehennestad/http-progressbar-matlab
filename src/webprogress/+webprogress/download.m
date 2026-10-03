@@ -44,12 +44,27 @@ function savedFilePath = download(targetPath, url, options)
 %   [...] = webprogress.download(...,FileSizeBytes=N) specifies the file
 %   size in bytes to use for progress when the server does not report it.
 %
+%   [...] = webprogress.download(...,Resume=TF) keeps the part of the file
+%   received so far when the download fails or is interrupted, and
+%   continues from it on a later call when TF is true. The default is
+%   false. FILENAME must be a file path, not a folder. The part is kept
+%   in FILENAME + ".part", and the ETag and length of the file it belongs
+%   to in FILENAME + ".part.json". A later call with Resume=true asks the
+%   server for the rest of that file only, so URL may differ between
+%   calls, as a presigned URL does. If the file has changed on the
+%   server, or the server cannot send part of a file, the download starts
+%   from the beginning. The same happens when the server gives the file
+%   no ETag or a weak one. Both files are deleted after a successful
+%   download. Two MATLAB sessions that download to the same FILENAME
+%   with Resume=true write the same partial file and corrupt it.
+%
 %   webprogress.download raises an error if the server responds with a
 %   status that is not a successful 2xx status, if the connection closes
 %   before the number of bytes the server announced in its
 %   Content-Length header has arrived, or if the server announces
 %   different lengths in several Content-Length headers. In each case no
-%   file is saved.
+%   file is saved. With Resume=true, the part received before the error
+%   is kept.
 %
 %   Example: Download a file and print progress in the Command Window
 %       url = "https://allen-brain-observatory.s3.us-west-2" + ...
@@ -71,6 +86,7 @@ function savedFilePath = download(targetPath, url, options)
         options.IndentSize     (1,1) uint8                       = 0
         options.Figure         {mustBeFigureOrEmpty}             = []
         options.FileSizeBytes  (1,1) double                      = nan
+        options.Resume         (1,1) logical                     = false
     end
 
     % The URL is already percent-encoded, as any URL handed out by a web
@@ -97,13 +113,14 @@ function savedFilePath = download(targetPath, url, options)
         'Figure', options.Figure, ...
         'FileSizeBytes', options.FileSizeBytes };
     
-    webOpts = matlab.net.http.HTTPOptions(...
-        'ProgressMonitorFcn', @(opts) webprogress.FileTransferProgressMonitor(monitorOpts{:}),...
-        'UseProgressMonitor', true, ...
-        'ConnectTimeout', 20);
-
     isFolderTarget = isfolder(targetPath);
     if isFolderTarget
+        if options.Resume
+            error("webprogress:download:FolderTargetNotResumable", ...
+                "Cannot resume a download into the folder ""%s"", because the file name " + ...
+                "is known only after the download starts. Give the path of the file " + ...
+                "to write instead of a folder.", targetPath)
+        end
         targetFolder = targetPath;
     else
         targetFolder = fileparts(targetPath);
@@ -117,65 +134,252 @@ function savedFilePath = download(targetPath, url, options)
         end
     end
 
-    % Receive the file in a temporary file that replaces the target only
-    % after a successful download, so an existing file survives a failed or
-    % interrupted download. The file consumer writes the response body
-    % whatever the status, and it overwrites its target as soon as data
-    % arrives. The temporary file sits in the target folder so that the
-    % final move is a rename, not a copy. Its .part extension stops the file
-    % consumer from adding an extension of its own, such as ".txt" for a
-    % text/plain response. onCleanup deletes the temporary file when the
-    % function exits early, including by an error or Ctrl+C.
     [~, folderInfo] = fileattrib(targetFolder);
     targetFolder = folderInfo.Name; % Full path, also for a relative input
-    temporaryFile = [tempname(targetFolder), '.part'];
-    temporaryFileCleanup = onCleanup(@() deleteIfFile(temporaryFile));
-    consumer = matlab.net.http.io.FileConsumer(temporaryFile);
-    
-    method = matlab.net.http.RequestMethod.GET;
-    req = matlab.net.http.RequestMessage(method, [], []);
-    
-    [resp, ~, ~] = req.send(uri, webOpts, consumer);
 
-    if resp.StatusCode.getClass() ~= matlab.net.http.StatusClass.Successful
-        error("webprogress:download:RequestFailed", ...
-            "Download failed because the server responded with ""%s"". " + ...
-            "Check that the URL is correct and has not expired.", ...
-            string(resp.StatusLine))
-    end
-
-    assertCompleteTransfer(resp, temporaryFile)
-
-    if isFolderTarget
-        targetName = getRemoteFilename(resp, uri);
-        if strlength(targetName) == 0
-            error("webprogress:download:NoFilename", ...
-                "Cannot name the downloaded file because neither the server " + ...
-                "response nor the URL gives a file name. Give the path of the " + ...
-                "file to write instead of a folder.")
-        end
-    else
+    if options.Resume
         [~, name, ext] = fileparts(targetPath);
         targetName = string(name) + string(ext);
+        receivedFile = string(fullfile(targetFolder, targetName)) + ".part";
+        stateFile = receivedFile + ".json";
+        receiveResumable(uri, receivedFile, stateFile, monitorOpts)
+    else
+        % Receive the file in a temporary file that replaces the target
+        % only after a successful download, so an existing file survives a
+        % failed or interrupted download. The file consumer writes the
+        % response body whatever the status, and it overwrites its target
+        % as soon as data arrives. The temporary file sits in the target
+        % folder so that the final move is a rename, not a copy. Its .part
+        % extension stops the file consumer from adding an extension of
+        % its own, such as ".txt" for a text/plain response. onCleanup
+        % deletes the temporary file when the function exits early,
+        % including by an error or Ctrl+C.
+        receivedFile = string(tempname(targetFolder)) + ".part";
+        temporaryFileCleanup = onCleanup(@() deleteIfFile(receivedFile));
+        consumer = matlab.net.http.io.FileConsumer(receivedFile);
+
+        webOpts = createHttpOptions(@(varargin) ...
+            webprogress.FileTransferProgressMonitor(monitorOpts{:}));
+        method = matlab.net.http.RequestMethod.GET;
+        req = matlab.net.http.RequestMessage(method, [], []);
+
+        [resp, ~, ~] = req.send(uri, webOpts, consumer);
+
+        if resp.StatusCode.getClass() ~= matlab.net.http.StatusClass.Successful
+            raiseRequestFailed(resp)
+        end
+
+        assertCompleteTransfer(resp, receivedFile)
+
+        if isFolderTarget
+            targetName = getRemoteFilename(resp, uri);
+            if strlength(targetName) == 0
+                error("webprogress:download:NoFilename", ...
+                    "Cannot name the downloaded file because neither the server " + ...
+                    "response nor the URL gives a file name. Give the path of the " + ...
+                    "file to write instead of a folder.")
+            end
+        else
+            [~, name, ext] = fileparts(targetPath);
+            targetName = string(name) + string(ext);
+        end
     end
 
-    % The file consumer creates its file when the first data arrives, so a
+    % The consumer creates its file when the first data arrives, so a
     % response with an empty body leaves no file to move.
-    if ~isfile(temporaryFile)
-        fclose(fopen(temporaryFile, 'w'));
+    if ~isfile(receivedFile)
+        fclose(fopen(receivedFile, 'w'));
     end
 
     targetFile = string(fullfile(targetFolder, targetName));
-    [isMoved, moveMessage] = movefile(temporaryFile, targetFile, 'f');
+    [isMoved, moveMessage] = movefile(receivedFile, targetFile, 'f');
     if ~isMoved
         error("webprogress:download:CannotSaveFile", ...
             "Cannot save the downloaded file as ""%s"": %s", targetFile, moveMessage)
+    end
+
+    if options.Resume
+        deleteIfFile(stateFile)
     end
 
     savedFilePath = targetFile;
 
     if nargout < 1
         clear savedFilePath
+    end
+end
+
+function webOpts = createHttpOptions(progressMonitorFcn)
+    %createHttpOptions - Return the HTTP options of a download
+    webOpts = matlab.net.http.HTTPOptions(...
+        'ProgressMonitorFcn', progressMonitorFcn, ...
+        'UseProgressMonitor', true, ...
+        'ConnectTimeout', 20);
+end
+
+function raiseRequestFailed(response)
+    %raiseRequestFailed - Raise the error for a response with a failed status
+    error("webprogress:download:RequestFailed", ...
+        "Download failed because the server responded with ""%s"". " + ...
+        "Check that the URL is correct and has not expired.", ...
+        string(response.StatusLine))
+end
+
+function receiveResumable(uri, partialFile, stateFile, monitorOpts)
+    %receiveResumable - Receive a file into a partial file that survives failures
+    %   The request asks for the bytes after those in partialFile when
+    %   stateFile holds the strong entity tag of the file they came from.
+    %   The consumer checks that a 206 response continues that file,
+    %   because a server may ignore If-Range and send a range of a
+    %   changed file. When it does not, or the range cannot be satisfied
+    %   because the partial file is longer than the file on the server,
+    %   both files are deleted and the download starts from the
+    %   beginning with a second request. Any status other than 200, 206
+    %   or 416 leaves both files unchanged.
+    [entityTag, totalBytes] = readState(stateFile);
+    offset = 0;
+    if strlength(entityTag) > 0 && isfile(partialFile)
+        fileInfo = dir(partialFile);
+        offset = fileInfo.bytes;
+    end
+
+    isRestartRequired = false;
+    try
+        [response, consumer] = sendResumableRequest(uri, partialFile, stateFile, ...
+            offset, entityTag, totalBytes, monitorOpts);
+    catch exception
+        if exception.identifier ~= "webprogress:download:RestartRequired"
+            rethrow(exception)
+        end
+        isRestartRequired = true;
+    end
+
+    % 416 answers a range that starts at or past the end of the file. A
+    % partial file as long as the file it came from already holds the
+    % whole file. The length comes from the state file, because a 416
+    % response need not carry Content-Range (RFC 9110, section 15.5.17).
+    % A 416 that carries another entity tag answers for a changed file,
+    % which a server that ignores If-Range does not tell otherwise.
+    if ~isRestartRequired && double(response.StatusCode) == 416 && offset > 0
+        responseETag = webprogress.internal.getStrongETag(response);
+        isSameFile = strlength(responseETag) == 0 || responseETag == entityTag;
+        if isSameFile && offset == totalBytes
+            return
+        end
+        isRestartRequired = true;
+    end
+
+    if isRestartRequired
+        deleteIfFile(partialFile)
+        deleteIfFile(stateFile)
+        [response, consumer] = sendResumableRequest(uri, partialFile, stateFile, ...
+            0, "", nan, monitorOpts);
+    end
+
+    if ~any(double(response.StatusCode) == [200, 206])
+        raiseRequestFailed(response)
+    end
+
+    assertCompleteResumable(partialFile, consumer.ExpectedBytes, consumer.TotalBytes)
+end
+
+function [response, consumer] = sendResumableRequest(uri, partialFile, stateFile, ...
+        offset, entityTag, totalBytes, monitorOpts)
+    %sendResumableRequest - Send a GET request for the bytes from offset onward
+    %   An offset of 0 asks for the whole file. Accept-Encoding asks for
+    %   the file without a content coding, because a byte range counts
+    %   the bytes as sent (RFC 9110, sections 12.5.3 and 14.1), and the
+    %   HTTP client otherwise asks for gzip. If-Range lets a server that
+    %   honours it send the whole file instead of a range when the
+    %   entity tag no longer matches (section 13.1.5).
+    consumer = webprogress.internal.ResumableFileConsumer(partialFile, stateFile, ...
+        offset, entityTag, totalBytes);
+    webOpts = createHttpOptions(@(varargin) createResumeMonitor(consumer, monitorOpts));
+
+    fields = matlab.net.http.HeaderField("Accept-Encoding", "identity");
+    if offset > 0
+        fields = [fields, ...
+            matlab.net.http.HeaderField("Range", sprintf("bytes=%d-", offset)), ...
+            matlab.net.http.HeaderField("If-Range", entityTag)];
+    end
+    method = matlab.net.http.RequestMethod.GET;
+    req = matlab.net.http.RequestMessage(method, fields, []);
+
+    response = req.send(uri, webOpts, consumer);
+end
+
+function monitor = createResumeMonitor(consumer, monitorOpts)
+    %createResumeMonitor - Create a progress monitor and hand it to the consumer
+    %   The consumer sets the StartBytes of the monitor once the response
+    %   status shows whether the body continues the partial file or
+    %   replaces it.
+    monitor = webprogress.FileTransferProgressMonitor(monitorOpts{:});
+    consumer.ProgressMonitor = monitor;
+end
+
+function [entityTag, totalBytes] = readState(stateFile)
+    %readState - Return the entity tag and length saved in a state file
+    %   The entity tag is "" and the length NaN when the file is missing
+    %   or is not valid JSON, as after an interruption while it was written.
+    %   Any other error, such as a file that cannot be opened, is raised.
+    %   A weak entity tag cannot tell whether two responses carry the
+    %   same bytes (RFC 9110, section 8.8.3), so it counts as none. The
+    %   length is NaN when the state file holds null, which is how an
+    %   unknown length is saved after a response without Content-Length.
+    entityTag = "";
+    totalBytes = nan;
+    if ~isfile(stateFile)
+        return
+    end
+    try
+        state = jsondecode(fileread(stateFile));
+    catch exception
+        if startsWith(exception.identifier, "MATLAB:json:")
+            return
+        end
+        rethrow(exception)
+    end
+    if ~isstruct(state) || ~isfield(state, 'ETag') || ~isfield(state, 'TotalBytes') ...
+            || ~(ischar(state.ETag) || isstring(state.ETag)) || ~isnumeric(state.TotalBytes) ...
+            || numel(state.TotalBytes) > 1
+        return
+    end
+    savedETag = strtrim(string(state.ETag));
+    if strlength(savedETag) == 0 || startsWith(savedETag, "W/")
+        return
+    end
+    entityTag = savedETag;
+    if ~isempty(state.TotalBytes)
+        totalBytes = double(state.TotalBytes);
+    end
+end
+
+function assertCompleteResumable(partialFile, expectedBytes, totalBytes)
+    %assertCompleteResumable - Raise an error if the partial file is not complete
+    %   expectedBytes is the size of the partial file after the whole
+    %   body, and totalBytes the length of the complete file. For a 206
+    %   response both come from Content-Range, and the body may end before
+    %   the complete length when the server does not know it ("*") or
+    %   sends less than the rest of the file. For a 200 response both are
+    %   the Content-Length. Either is NaN when the response does not give
+    %   it, and a transfer that neither describes cannot be checked.
+    receivedBytes = 0;
+    if isfile(partialFile)
+        fileInfo = dir(partialFile);
+        receivedBytes = fileInfo.bytes;
+    end
+
+    if ~isnan(totalBytes) && receivedBytes ~= totalBytes
+        error("webprogress:download:IncompleteTransfer", ...
+            "The download stopped after %d of %d bytes. The part received is kept " + ...
+            "in ""%s"". Call webprogress.download again with Resume=true to continue.", ...
+            receivedBytes, totalBytes, partialFile)
+    elseif isnan(totalBytes) && ~isnan(expectedBytes) && receivedBytes ~= expectedBytes
+        error("webprogress:download:IncompleteTransfer", ...
+            "The download stopped after %d bytes, before the %d bytes the server sent " + ...
+            "had arrived. The part received is kept in ""%s"". Call " + ...
+            "webprogress.download again with Resume=true to continue.", ...
+            receivedBytes, expectedBytes, partialFile)
     end
 end
 
@@ -186,31 +390,10 @@ function assertCompleteTransfer(response, filePath)
     %   truncated file. The size of the received file is compared with the
     %   Content-Length of the response. Without that header, as for a
     %   chunked response, there is nothing to compare with. A body with a
-    %   Content-Encoding such as gzip is decoded while it is saved, so its
-    %   saved size differs from Content-Length and is not compared. The
-    %   coding "identity" means a body that was not transformed, so its
-    %   sizes do match. RFC 9110 reserves that token for Accept-Encoding
-    %   and RFC 2616 defined it as a content coding, which is why a server
-    %   may still send it in Content-Encoding.
-    %
-    %   A response with several Content-Length headers of different values
-    %   is invalid (RFC 9110, section 8.6), and the length of its body
-    %   cannot be known, so it is an error. Repeated headers with the same
-    %   value count as one.
-    lengthFields = response.getFields("Content-Length");
-    if isempty(lengthFields)
-        return
-    end
-    declaredBytes = unique(lengthFields.convert());
-    if ~isscalar(declaredBytes)
-        error("webprogress:download:InvalidContentLength", ...
-            "The server gave %d different lengths for the file (%s bytes), so the " + ...
-            "download cannot be checked and the file was not saved. Try the download again.", ...
-            numel(declaredBytes), strjoin(string(declaredBytes), ", "))
-    end
-
-    encodingField = response.getFields("Content-Encoding");
-    if ~isempty(encodingField) && ~strcmpi(strtrim(string(encodingField(end).Value)), "identity")
+    %   content coding such as gzip is decoded while it is saved, so its
+    %   saved size differs from Content-Length and is not compared.
+    declaredBytes = webprogress.internal.getDeclaredLength(response);
+    if isnan(declaredBytes) || ~webprogress.internal.hasIdentityEncoding(response)
         return
     end
 
