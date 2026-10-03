@@ -42,7 +42,28 @@ function [wasSuccess, response] = upload(filePath, url, options)
 %   instead of a PUT request, for example to use another method or to add
 %   headers. The body of REQUEST is replaced by the file.
 %
-%   See also webprogress.download, webwrite
+%   [...] = webprogress.upload(...,Offset=N) sends the file from N bytes
+%   into it, instead of from its first byte. The default is 0.
+%
+%   [...] = webprogress.upload(...,NumBytes=N) sends N bytes of the file.
+%   The default is Inf, which sends the file to its end. With Offset or
+%   NumBytes, the request carries no header that names the range, and
+%   the Content-Type is not taken from the file. Add the headers that
+%   the service expects, such as a Content-Type, with RequestMessage.
+%   Use Offset and NumBytes to send one part of a file that a storage
+%   service receives in several requests.
+%
+%   [...] = webprogress.upload(...,ProgressMonitor=MONITOR) shows
+%   progress in MONITOR, a webprogress.MultipartProgressMonitor, which
+%   stays open after the upload. Pass the same monitor to the upload of
+%   each part of a file to show the progress of the whole file. A part
+%   that the server accepts is added to MONITOR.CompletedBytes. The
+%   display options of webprogress.upload are then ignored. If the user
+%   cancelled MONITOR, webprogress.upload raises an error instead of
+%   sending the part.
+%
+%   See also webprogress.download, webprogress.MultipartProgressMonitor,
+%   webwrite
 
 %   Written by Eivind Hennestad
 
@@ -56,6 +77,10 @@ function [wasSuccess, response] = upload(filePath, url, options)
         options.IndentSize     (1,1) uint8                       = 0
         options.Figure         {mustBeFigureOrEmpty}             = []
         options.RequestMessage matlab.net.http.RequestMessage    = matlab.net.http.RequestMessage.empty
+        options.Offset         (1,1) double {mustBeNonnegative, mustBeInteger} = 0
+        options.NumBytes       (1,1) double {mustBeNonnegative, mustBeIntegerOrInf} = Inf
+        options.ProgressMonitor webprogress.MultipartProgressMonitor ...
+                                                                 = webprogress.MultipartProgressMonitor.empty
     end
 
     if ~isempty(options.Filename)
@@ -76,13 +101,50 @@ function [wasSuccess, response] = upload(filePath, url, options)
         'IndentSize', options.IndentSize, ...
         'Figure', options.Figure };
     
+    monitor = options.ProgressMonitor;
+    if isempty(monitor)
+        progressMonitorFcn = @(varargin) webprogress.FileTransferProgressMonitor(monitorOpts{:});
+    else
+        if monitor.IsCancelled
+            error("webprogress:upload:Cancelled", ...
+                "The upload was not sent because the progress monitor was cancelled. " + ...
+                "Create a new MultipartProgressMonitor to upload the file again.")
+        end
+        % The HTTP stack calls the function for each request, so every
+        % part reports to the same monitor.
+        progressMonitorFcn = @(varargin) monitor;
+    end
+
     webOpts = matlab.net.http.HTTPOptions(...
-        'ProgressMonitorFcn', @(opts) webprogress.FileTransferProgressMonitor(monitorOpts{:}),...
+        'ProgressMonitorFcn', progressMonitorFcn, ...
         'UseProgressMonitor', true, ...
         'ConnectTimeout', 20);
 
-    % Create a file provider for uploading the file
-    provider = matlab.net.http.io.FileProvider(filePath);
+    if ~isfile(filePath)
+        error("webprogress:upload:FileNotFound", ...
+            "Cannot upload ""%s"" because there is no such file. Check the path.", filePath)
+    end
+    fileInfo = dir(filePath);
+    fileSizeBytes = fileInfo.bytes;
+    numBytes = min(options.NumBytes, fileSizeBytes - options.Offset);
+    % An offset at the end of the file leaves nothing to send, except
+    % for an empty file sent whole.
+    isOffsetPastEnd = options.Offset > 0 && options.Offset >= fileSizeBytes;
+    isRangePastEnd = ~isinf(options.NumBytes) && options.Offset + options.NumBytes > fileSizeBytes;
+    if isOffsetPastEnd || isRangePastEnd
+        error("webprogress:upload:RangeOutsideFile", ...
+            "Cannot send %g bytes from byte %d of ""%s"", because the file has %d bytes. " + ...
+            "Give an Offset and NumBytes that lie within the file.", ...
+            options.NumBytes, options.Offset, filePath, fileSizeBytes)
+    end
+
+    % The file provider names the Content-Type after the file, which
+    % suits a whole file but not a part of one.
+    if options.Offset == 0 && isinf(options.NumBytes)
+        provider = matlab.net.http.io.FileProvider(filePath);
+    else
+        provider = webprogress.internal.FileRangeProvider(filePath, options.Offset, numBytes);
+    end
 
     if isempty(options.RequestMessage)
         method = matlab.net.http.RequestMethod.PUT;
@@ -103,6 +165,10 @@ function [wasSuccess, response] = upload(filePath, url, options)
     % Servers acknowledge an upload with any 2xx status, for example
     % 201 Created or 204 No Content, not only 200 OK.
     wasSuccess = response.StatusCode.getClass() == matlab.net.http.StatusClass.Successful;
+
+    if wasSuccess && ~isempty(monitor)
+        monitor.addCompletedBytes(numBytes)
+    end
     
     if nargout < 1
         if ~wasSuccess
@@ -116,5 +182,13 @@ function [wasSuccess, response] = upload(filePath, url, options)
 
     if nargout < 2
         clear response
+    end
+end
+
+function mustBeIntegerOrInf(value)
+    %mustBeIntegerOrInf - Validate that a value is a whole number or Inf
+    if ~isinf(value) && value ~= round(value)
+        error("webprogress:upload:InvalidNumBytes", ...
+            "NumBytes must be a whole number of bytes, or Inf to send the file to its end.")
     end
 end
