@@ -139,9 +139,10 @@ classdef ResumableFileConsumer < matlab.net.http.io.FileConsumer
         %   file, so the entity tag of the response is compared with the
         %   saved one. A 206 response to a single range carries
         %   Content-Range (RFC 9110, section 15.3.7), which must start
-        %   where the partial file ends and, when it gives the complete
-        %   length, give the saved one.
-            entityTag = getStrongETag(response);
+        %   where the partial file ends and, when both are known, give
+        %   the saved complete length. The saved length is unknown after
+        %   a first response without Content-Length.
+            entityTag = webprogress.internal.getStrongETag(response);
             if entityTag ~= obj.ExpectedETag
                 obj.raiseRestartRequired("The file on the server has changed.")
             end
@@ -153,7 +154,8 @@ classdef ResumableFileConsumer < matlab.net.http.io.FileConsumer
                     "The server sent the file from byte %d instead of byte %d.", ...
                     firstByte, obj.RequestedOffset))
             end
-            if ~isnan(completeLength) && completeLength ~= obj.ExpectedTotalBytes
+            isLengthKnown = ~isnan(completeLength) && ~isnan(obj.ExpectedTotalBytes);
+            if isLengthKnown && completeLength ~= obj.ExpectedTotalBytes
                 obj.raiseRestartRequired(sprintf( ...
                     "The file on the server has %d bytes instead of %d.", ...
                     completeLength, obj.ExpectedTotalBytes))
@@ -170,7 +172,7 @@ classdef ResumableFileConsumer < matlab.net.http.io.FileConsumer
         %writeState - Save the entity tag and length of a 200 response
         %   Without a strong entity tag the partial file cannot be
         %   resumed, so no state file is kept.
-            entityTag = getStrongETag(response);
+            entityTag = webprogress.internal.getStrongETag(response);
             if strlength(entityTag) == 0
                 if isfile(obj.StateFilePath)
                     delete(obj.StateFilePath)
@@ -192,21 +194,5 @@ function fileId = openFile(filePath, permission)
     if fileId < 0
         error("webprogress:download:CannotSaveFile", ...
             "Cannot write the downloaded data to ""%s"": %s", filePath, message)
-    end
-end
-
-function entityTag = getStrongETag(response)
-    %getStrongETag - Return the strong entity tag of a response, or ""
-    %   An entity tag is weak when it starts with "W/" (RFC 9110, section
-    %   8.8.3). Only a strong one tells that two responses carry the same
-    %   bytes, which If-Range needs (section 13.1.5).
-    entityTag = "";
-    tagField = response.getFields("ETag");
-    if isempty(tagField)
-        return
-    end
-    value = strtrim(string(tagField(end).Value));
-    if ~startsWith(value, "W/")
-        entityTag = value;
     end
 end
