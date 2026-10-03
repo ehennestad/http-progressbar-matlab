@@ -123,6 +123,37 @@ classdef DownloadResumeTest < matlab.unittest.TestCase
             testCase.verifyEqual(listFiles(testCase.Folder), "data.txt")
         end
 
+        function testChangedFileWithCompletePartialFileIsDownloadedFromStart(testCase)
+            % The partial file holds the whole file the state file
+            % describes, but the file on the server has another ETag, so
+            % the 416 answers for a changed file.
+            numBytes = testCase.FirstPartBytes;
+            testCase.downloadFirstPart(testCase.fileUrl( ...
+                'content', repmat('a', 1, 50), 'etag', 'e1'))
+            writeText(testCase.Target + ".part.json", ...
+                sprintf('{"ETag":"\\"e1\\"","TotalBytes":%d}', numBytes))
+
+            downloadQuietly(testCase.Target, testCase.fileUrl( ...
+                'content', repmat('b', 1, 10), 'etag', 'e2'));
+
+            testCase.verifyEqual(fileread(testCase.Target), repmat('b', 1, 10))
+            testCase.verifyEqual(listFiles(testCase.Folder), "data.txt")
+        end
+
+        function testUnknownSavedLengthIsResumed(testCase)
+            % A first response without Content-Length saves the length as
+            % null. The resume is checked by the ETag alone.
+            content = repmat('0123456789', 1, 5);
+            url = testCase.fileUrl('content', content, 'etag', 'e1');
+            testCase.downloadFirstPart(url)
+            writeText(testCase.Target + ".part.json", '{"ETag":"\"e1\"","TotalBytes":null}')
+
+            downloadQuietly(testCase.Target, url);
+
+            testCase.verifyEqual(fileread(testCase.Target), content)
+            testCase.verifyEqual(listFiles(testCase.Folder), "data.txt")
+        end
+
         function testPartialFileLongerThanFileIsDownloadedFromStart(testCase)
             % The server answers the range from byte FirstPartBytes with
             % status 416, and the partial file is shorter than the 50

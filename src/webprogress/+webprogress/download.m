@@ -258,8 +258,12 @@ function receiveResumable(uri, partialFile, stateFile, monitorOpts)
     % partial file as long as the file it came from already holds the
     % whole file. The length comes from the state file, because a 416
     % response need not carry Content-Range (RFC 9110, section 15.5.17).
+    % A 416 that carries another entity tag answers for a changed file,
+    % which a server that ignores If-Range does not tell otherwise.
     if ~isRestartRequired && double(response.StatusCode) == 416 && offset > 0
-        if offset == totalBytes
+        responseETag = webprogress.internal.getStrongETag(response);
+        isSameFile = strlength(responseETag) == 0 || responseETag == entityTag;
+        if isSameFile && offset == totalBytes
             return
         end
         isRestartRequired = true;
@@ -319,7 +323,9 @@ function [entityTag, totalBytes] = readState(stateFile)
     %   or is not valid JSON, as after an interruption while it was written.
     %   Any other error, such as a file that cannot be opened, is raised.
     %   A weak entity tag cannot tell whether two responses carry the
-    %   same bytes (RFC 9110, section 8.8.3), so it counts as none.
+    %   same bytes (RFC 9110, section 8.8.3), so it counts as none. The
+    %   length is NaN when the state file holds null, which is how an
+    %   unknown length is saved after a response without Content-Length.
     entityTag = "";
     totalBytes = nan;
     if ~isfile(stateFile)
@@ -334,7 +340,8 @@ function [entityTag, totalBytes] = readState(stateFile)
         rethrow(exception)
     end
     if ~isstruct(state) || ~isfield(state, 'ETag') || ~isfield(state, 'TotalBytes') ...
-            || ~(ischar(state.ETag) || isstring(state.ETag)) || ~isnumeric(state.TotalBytes)
+            || ~(ischar(state.ETag) || isstring(state.ETag)) || ~isnumeric(state.TotalBytes) ...
+            || numel(state.TotalBytes) > 1
         return
     end
     savedETag = strtrim(string(state.ETag));
@@ -342,7 +349,9 @@ function [entityTag, totalBytes] = readState(stateFile)
         return
     end
     entityTag = savedETag;
-    totalBytes = double(state.TotalBytes);
+    if ~isempty(state.TotalBytes)
+        totalBytes = double(state.TotalBytes);
+    end
 end
 
 function assertCompleteResumable(partialFile, expectedBytes, totalBytes)
