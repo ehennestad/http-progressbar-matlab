@@ -32,8 +32,6 @@ classdef ResumableFileConsumer < matlab.net.http.io.FileConsumer
 %
 %   This class is used by webprogress.download.
 
-%   Written by Eivind Hennestad
-
     properties (SetAccess = immutable)
         PartFilePath  string % File that receives the body
         StateFilePath string % File that holds the entity tag and total length

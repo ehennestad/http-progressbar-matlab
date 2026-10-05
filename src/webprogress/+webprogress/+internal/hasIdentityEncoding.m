@@ -11,8 +11,6 @@ function tf = hasIdentityEncoding(response)
 %
 %   This function is used by webprogress.download.
 
-%   Written by Eivind Hennestad
-
     arguments
         response (1,1) matlab.net.http.ResponseMessage
     end
