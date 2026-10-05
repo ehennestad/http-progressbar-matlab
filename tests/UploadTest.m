@@ -24,8 +24,10 @@ classdef UploadTest < matlab.unittest.TestCase
             testsFolder = fileparts(mfilename('fullpath'));
             sourceFolder = fullfile(fileparts(testsFolder), 'src', 'webprogress');
             testCase.applyFixture(matlab.unittest.fixtures.PathFixture(sourceFolder));
-            testCase.applyFixture(matlab.unittest.fixtures.PathFixture( ...
-                fullfile(testsFolder, 'fixtures')));
+            for folderName = ["fixtures", "helpers"]
+                testCase.applyFixture(matlab.unittest.fixtures.PathFixture( ...
+                    fullfile(testsFolder, folderName)));
+            end
         end
 
         function startLocalServer(testCase)
@@ -88,6 +90,19 @@ classdef UploadTest < matlab.unittest.TestCase
             testCase.verifyThat(output, ~ContainsSubstring('Downloaded'))
         end
 
+        function testCompletionMessageDescribesUploadWithReplyBody(testCase)
+            % The server answers with a JSON body, which the display must
+            % not describe as a download.
+            import matlab.unittest.constraints.ContainsSubstring
+
+            output = captureOutput(@() webprogress.upload(testCase.FilePath, ...
+                testCase.ServerUrl + "/echo", ...
+                'DisplayMode', 'Command Window', 'UpdateInterval', 0.001));
+
+            testCase.verifySubstring(output, 'Uploaded 3 MB/3 MB (100%). Completed in')
+            testCase.verifyThat(output, ~ContainsSubstring('Downloaded'))
+        end
+
         function testTitleShowsLocalFileName(testCase)
             output = captureOutput(@() webprogress.upload(testCase.FilePath, ...
                 testCase.statusUrl(201), ...
@@ -117,6 +132,17 @@ classdef UploadTest < matlab.unittest.TestCase
             testCase.verifySubstring(output, 'Uploading object name.bin')
             testCase.verifyThat(output, ~ContainsSubstring(testCase.FileName))
         end
+
+        function testStalledUploadErrorsAlsoWithOutput(testCase)
+            % The server pauses for 3 seconds after the first kilobyte,
+            % which is longer than the DataTimeout of the call. A stall is
+            % not a server status, so the error is raised also when the
+            % call has an output.
+            url = testCase.statusUrl(201) + "?read_delay=3";
+
+            testCase.verifyError(@() uploadWithOutput(testCase.FilePath, url), ...
+                'webprogress:upload:TransferStalled')
+        end
     end
 
     methods (Access = private)
@@ -140,15 +166,16 @@ classdef UploadTest < matlab.unittest.TestCase
     end
 end
 
+function wasSuccess = uploadWithOutput(filePath, url)
+    %uploadWithOutput - Upload with an output and a short DataTimeout, without printing
+    [~, wasSuccess] = captureOutput(@() webprogress.upload(filePath, url, ...
+        'DisplayMode', 'Command Window', 'DataTimeout', 0.5));
+end
+
 function uploadWithoutOutputs(filePath, url) %#ok<INUSD> used inside evalc
     %uploadWithoutOutputs - Upload asking for no outputs, without printing
     %   evalc passes the error raised for an unsuccessful status on to the
     %   caller.
     evalc(['webprogress.upload(filePath, url, ', ...
         '''DisplayMode'', ''Command Window'');']);
-end
-
-function output = captureOutput(fcn) %#ok<INUSD> fcn is called inside evalc
-    %captureOutput - Call a function and return its Command Window output
-    output = evalc('fcn()');
 end

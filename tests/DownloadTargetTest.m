@@ -14,8 +14,10 @@ classdef DownloadTargetTest < matlab.unittest.TestCase
             testsFolder = fileparts(mfilename('fullpath'));
             sourceFolder = fullfile(fileparts(testsFolder), 'src', 'webprogress');
             testCase.applyFixture(matlab.unittest.fixtures.PathFixture(sourceFolder));
-            testCase.applyFixture(matlab.unittest.fixtures.PathFixture( ...
-                fullfile(testsFolder, 'fixtures')));
+            for folderName = ["fixtures", "helpers"]
+                testCase.applyFixture(matlab.unittest.fixtures.PathFixture( ...
+                    fullfile(testsFolder, folderName)));
+            end
         end
 
         function startLocalServer(testCase)
@@ -143,6 +145,19 @@ classdef DownloadTargetTest < matlab.unittest.TestCase
             testCase.verifyEmpty(listFiles(testCase.Folder))
         end
 
+        function testStalledDownloadErrorsAndLeavesNoFile(testCase)
+            % The server pauses for 3 seconds after the first byte, which
+            % is longer than the DataTimeout of the call.
+            target = fullfile(testCase.Folder, 'data.txt');
+            url = testCase.fileUrl('data.txt', 'content', repmat('x', 1, 50), 'delay', '3');
+
+            testCase.verifyError(@() captureOutput(@() webprogress.download(target, url, ...
+                'DisplayMode', 'Command Window', 'DataTimeout', 0.5)), ...
+                'webprogress:download:TransferStalled')
+
+            testCase.verifyEmpty(listFiles(testCase.Folder))
+        end
+
         function testConflictingContentLengthsError(testCase)
             % The server sends the 5-byte body with the lengths 5 and 3.
             % libcurl 8.17 and later reject such a response, so an HTTP
@@ -220,12 +235,6 @@ function savedPath = downloadQuietly(target, url) %#ok<INUSD> used inside evalc
     savedPath = '';
     evalc(['savedPath = webprogress.download(target, url, ', ...
         '''DisplayMode'', ''Command Window'');']);
-end
-
-function names = listFiles(folder)
-    %listFiles - Return the names of the files in a folder
-    listing = dir(folder);
-    names = string({listing(~[listing.isdir]).name});
 end
 
 function writeText(filePath, text)

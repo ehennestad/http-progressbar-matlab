@@ -1,20 +1,50 @@
 """Local HTTP server for the upload and download tests.
 
 A PUT or POST request to /<code> receives HTTP status <code> with an empty
-body. A GET request to /<code> receives status <code> with an HTML error
+body. A PUT or POST request to /echo receives status 200 with a JSON body
+that describes the request body: its length, the sum of its bytes, its
+first and last bytes, the Content-Length and Transfer-Encoding headers of
+the request (null when absent), and the list of its Content-Type headers.
+A PUT or POST request to /redirect receives status 307 with a Location
+header that points to /echo, so a client that follows it sends the body
+again. A PUT or POST request with read_delay=<seconds> in its query makes
+the server pause for that long after reading the first kilobyte of the
+body, so that the upload stalls. A GET request to /<code> receives status
+<code> with an HTML error
 page. A GET request to /files/<name> receives status 200 with a text/plain
-body. Its query can set the body with content=<text>, add a
+body. Its query can set the body with content=<text>, or with
+size=<bytes> to a body of that many bytes that repeat the values 0 to
+250, add a
 Content-Disposition header with filename=<name>, keep the transfer in
 progress for at least delay=<seconds> by pausing after the first byte of
 the body, close the connection after truncate=<bytes> bytes of the body
 while Content-Length still announces the whole body, and send a second
 Content-Length header with the value extra_length=<bytes>.
 
+A file response carries a strong ETag made from the body. The query can
+set its opaque part with etag=<text>, make it weak with weak=1, or leave
+it out with no_etag=1. A request with "Range: bytes=<first>-" receives
+status 206 with the bytes from first onward, or status 416 without
+Content-Range when first is at or past the end of the body. If-Range is
+ignored, as some object stores do. ignore_range=1 makes the server ignore
+Range and send status 200. range_start=<n> makes a 206 response start at
+byte n instead of the byte the request asked for, and complete_length=*
+makes it give the complete length as "*". gzip=1 sends the body gzipped
+with "Content-Encoding: gzip". truncate and delay apply to the bytes
+sent.
+
+A GET request to /requests receives a JSON list of the file requests
+received so far, each with its path and headers.
+
 The server binds a free port on 127.0.0.1 and writes the port number to
 the file given as the first command-line argument.
 """
+import gzip
+import hashlib
 import http.server
+import json
 import os
+import re
 import signal
 import sys
 import time
@@ -26,13 +56,65 @@ from urllib.parse import parse_qs, unquote, urlsplit
 signal.pthread_sigmask(signal.SIG_UNBLOCK, [signal.SIGTERM])
 
 
+file_requests = []
+
+
 class StatusHandler(http.server.BaseHTTPRequestHandler):
+    def _read_body(self, read_delay):
+        """Return the request body, decoding a chunked transfer coding.
+
+        With a read_delay, the server pauses for that many seconds after
+        the first kilobyte of a body with a Content-Length, so that the
+        client's upload stalls.
+        """
+        if self.headers.get("Transfer-Encoding", "").lower() == "chunked":
+            body = b""
+            while True:
+                size = int(self.rfile.readline().split(b";")[0], 16)
+                if size == 0:
+                    # Skip any trailer fields and the final empty line.
+                    while self.rfile.readline() not in (b"\r\n", b"\n", b""):
+                        pass
+                    return body
+                body += self.rfile.read(size)
+                self.rfile.readline()
+        length = int(self.headers.get("Content-Length", 0))
+        if read_delay > 0 and length > 1024:
+            body = self.rfile.read(1024)
+            time.sleep(read_delay)
+            return body + self.rfile.read(length - 1024)
+        return self.rfile.read(length)
+
     def _respond(self):
+        parts = urlsplit(self.path)
+        query = parse_qs(parts.query)
+        path = parts.path.strip("/")
         # Read the whole request body before responding, so the client
         # finishes sending the file.
-        length = int(self.headers.get("Content-Length", 0))
-        self.rfile.read(length)
-        code = int(self.path.strip("/").split("/")[0] or 200)
+        body = self._read_body(float(query.get("read_delay", ["0"])[0]))
+        if path == "echo":
+            reply = json.dumps({
+                "length": len(body),
+                "sum": sum(body),
+                "head": list(body[:16]),
+                "tail": list(body[-16:]),
+                "content_length": self.headers.get("Content-Length"),
+                "transfer_encoding": self.headers.get("Transfer-Encoding"),
+                "content_types": self.headers.get_all("Content-Type") or [],
+            }).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(reply)))
+            self.end_headers()
+            self.wfile.write(reply)
+            return
+        if path == "redirect":
+            self.send_response(307)
+            self.send_header("Location", f"http://{self.headers['Host']}/echo")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        code = int(path.split("/")[0] or 200)
         self.send_response(code)
         self.send_header("Content-Length", "0")
         self.end_headers()
@@ -49,19 +131,38 @@ class StatusHandler(http.server.BaseHTTPRequestHandler):
             code = int(segments[0])
             content_type = "text/html"
             body = b"<html><body>Error page</body></html>"
+        elif segments[0] == "requests":
+            code = 200
+            content_type = "application/json"
+            body = json.dumps(file_requests).encode()
         elif segments[0] == "files":
+            file_requests.append({"path": self.path,
+                                  "headers": dict(self.headers.items())})
             code = 200
             content_type = "text/plain; charset=utf-8"
             name = unquote("/".join(segments[1:]))
-            body = query.get("content", [f"Content of {name}"])[0].encode()
+            if "size" in query:
+                size = int(query["size"][0])
+                body = (bytes(range(251)) * (size // 251 + 1))[:size]
+            else:
+                body = query.get("content", [f"Content of {name}"])[0].encode()
         else:
             code = 404
             content_type = "text/plain"
             body = b"Not found"
 
+        headers = []
+        if segments[0] == "files":
+            code, body, headers = self._select_range(body, query)
+            if query.get("gzip", ["0"])[0] == "1":
+                body = gzip.compress(body)
+                headers.append(("Content-Encoding", "gzip"))
+
         self.send_response(code)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
+        for header in headers:
+            self.send_header(*header)
         if "extra_length" in query:
             self.send_header("Content-Length", query["extra_length"][0])
         if "filename" in query:
@@ -87,6 +188,29 @@ class StatusHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(body[1:])
         else:
             self.wfile.write(body)
+
+    def _select_range(self, body, query):
+        """Return the status, body and extra headers for a file request."""
+        headers = [("Accept-Ranges", "bytes")]
+        if query.get("no_etag", ["0"])[0] != "1":
+            opaque = query.get("etag", [hashlib.md5(body).hexdigest()])[0]
+            etag = f'"{opaque}"'
+            if query.get("weak", ["0"])[0] == "1":
+                etag = "W/" + etag
+            headers.append(("ETag", etag))
+
+        match = re.fullmatch(r"bytes=(\d+)-", self.headers.get("Range", ""))
+        if match is None or query.get("ignore_range", ["0"])[0] == "1":
+            return 200, body, headers
+
+        first = int(match.group(1))
+        if first >= len(body):
+            return 416, b"", headers
+        first = int(query.get("range_start", [first])[0])
+        complete = query.get("complete_length", [str(len(body))])[0]
+        headers.append(("Content-Range",
+                        f"bytes {first}-{len(body) - 1}/{complete}"))
+        return 206, body[first:], headers
 
     def log_message(self, *args):
         pass
