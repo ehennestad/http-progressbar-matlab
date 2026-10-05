@@ -197,6 +197,29 @@ classdef FileTransferProgressMonitorTest < matlab.unittest.TestCase
             testCase.verifyEqual(monitor.PercentTransferred, 10, 'AbsTol', 1e-12)
         end
 
+        function testMultipartStartsAtCompletedBytes(testCase)
+            % A monitor that continues an upload counts the parts the
+            % server accepted before it, on the display and in the
+            % reports to ProgressFcn.
+            spy = TransferCallbackSpy();
+            monitor = webprogress.MultipartProgressMonitor(testCase.FileSizeBytes, ...
+                'DisplayMode', 'Command Window', 'UpdateInterval', 0, ...
+                'CompletedBytes', 4 * 2^20, 'ProgressFcn', @spy.record);
+            monitor.Direction = matlab.net.http.MessageType.Request;
+
+            output = captureOutput(@() setValues(monitor, 1 * 2^20));
+            monitor.addCompletedBytes(1 * 2^20);
+
+            testCase.verifySubstring(output, 'Uploaded 5 MB/10 MB (50%)')
+            testCase.verifyEqual(spy.Reports(1).TransferredBytes, 5 * 2^20)
+            testCase.verifyEqual(monitor.CompletedBytes, 5 * 2^20)
+        end
+
+        function testMultipartCompletedBytesAboveTotalErrors(testCase)
+            testCase.verifyError(@() webprogress.MultipartProgressMonitor(1000, ...
+                'CompletedBytes', 1001), 'webprogress:progressMonitor:CompletedBytesAboveTotal')
+        end
+
         function testMultipartDisplayStaysOpenAfterRequest(testCase)
             monitor = webprogress.MultipartProgressMonitor(testCase.FileSizeBytes, ...
                 'DisplayMode', 'Command Window', 'UpdateInterval', 0);

@@ -23,13 +23,20 @@ classdef (Sealed) MultipartProgressMonitor < webprogress.FileTransferProgressMon
 %                        file. See webprogress.FileTransferProgressMonitor.
 %       CancelRequestedFcn - Function that returns true when the upload
 %                        should stop. It acts as the Cancel button does.
+%       CompletedBytes - Bytes of the file that the server accepted in
+%                        earlier calls, as after a cancel. The default
+%                        is 0. Progress counts them, and the remaining
+%                        time is estimated from the parts this monitor
+%                        sends.
 %
 %   Call close(monitor) after the last part to close the dialog or to
 %   print the completion message. Deleting the monitor also closes the
 %   dialog. If the user presses Cancel, or CancelRequestedFcn returns
 %   true, IsCancelled becomes true and webprogress.upload raises the
 %   error webprogress:upload:Cancelled for the part in progress and for
-%   each later part, which it does not send.
+%   each later part, which it does not send. To continue after a cancel,
+%   create a new monitor with CompletedBytes set to the bytes the server
+%   accepted, and send the remaining parts.
 %
 %   Example: Upload a file in parts of 100 MB
 %       fileInfo = dir(filePath);
@@ -68,10 +75,21 @@ classdef (Sealed) MultipartProgressMonitor < webprogress.FileTransferProgressMon
                 options.Figure                      {mustBeFigureOrEmpty} = []
                 options.ProgressFcn             {mustBeFunctionHandleOrEmpty} = []
                 options.CancelRequestedFcn      {mustBeFunctionHandleOrEmpty} = []
+                options.CompletedBytes (1,1) double {mustBeNonnegative}   = 0
             end
+            completedBytes = options.CompletedBytes;
+            if completedBytes > totalBytes
+                error("webprogress:progressMonitor:CompletedBytesAboveTotal", ...
+                    "CompletedBytes is %d, more than the %d bytes of the file. Give the " + ...
+                    "bytes the server has accepted so far.", completedBytes, totalBytes)
+            end
+            % The bytes accepted before this monitor go to the parent as
+            % StartBytes, which its remaining-time estimate leaves out.
+            options = rmfield(options, 'CompletedBytes');
             nameValues = namedargs2cell(options);
             obj@webprogress.FileTransferProgressMonitor(nameValues{:}, ...
-                FileSizeBytes=totalBytes);
+                FileSizeBytes=totalBytes, StartBytes=completedBytes);
+            obj.CompletedPartBytes = completedBytes;
         end
 
         function done(obj)
