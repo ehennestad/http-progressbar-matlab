@@ -121,6 +121,33 @@ classdef UploadRangeTest < matlab.unittest.TestCase
             testCase.verifyEqual(string(echo.content_types), "application/octet-stream")
         end
 
+        function testRangeIsSentAgainAfterRedirect(testCase)
+            % The server answers the first request with 307, and the
+            % client sends the request again to the new location. The
+            % provider rereads the range from its start for the second
+            % request, so the echo describes the whole range.
+            [~, ~, response] = captureOutput(@() webprogress.upload(testCase.FilePath, ...
+                testCase.ServerUrl + "/redirect", 'Offset', 1000, 'NumBytes', 5000, ...
+                DisplayMode="Command Window"));
+
+            testCase.verifyEcho(response.Body.Data, 1000, 5000)
+        end
+
+        function testProviderErrorsWhenFileShrinks(testCase)
+            % The file loses bytes of the range after the provider was
+            % created, as when it is rewritten during an upload. The
+            % provider raises an error and closes the file.
+            provider = webprogress.internal.FileRangeProvider(testCase.FilePath, 1000, 5000);
+            fileId = fopen(testCase.FilePath, 'w');
+            fwrite(fileId, testCase.FileBytes(1:3000), 'uint8');
+            fclose(fileId);
+
+            testCase.verifyError(@() provider.getData(4096), 'webprogress:upload:FileChanged')
+
+            openFiles = arrayfun(@fopen, openedFiles(), 'UniformOutput', false);
+            testCase.verifyFalse(ismember(testCase.FilePath, openFiles))
+        end
+
         function testFractionalNumBytesErrors(testCase)
             testCase.verifyError(@() testCase.uploadToEcho('NumBytes', 1.5), ...
                 'webprogress:upload:InvalidNumBytes')

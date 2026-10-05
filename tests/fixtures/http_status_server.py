@@ -4,7 +4,10 @@ A PUT or POST request to /<code> receives HTTP status <code> with an empty
 body. A PUT or POST request to /echo receives status 200 with a JSON body
 that describes the request body: its length, the sum of its bytes, its
 first and last bytes, the Content-Length and Transfer-Encoding headers of
-the request (null when absent), and the list of its Content-Type headers. A GET request to /<code> receives status <code> with an HTML error
+the request (null when absent), and the list of its Content-Type headers.
+A PUT or POST request to /redirect receives status 307 with a Location
+header that points to /echo, so a client that follows it sends the body
+again. A GET request to /<code> receives status <code> with an HTML error
 page. A GET request to /files/<name> receives status 200 with a text/plain
 body. Its query can set the body with content=<text>, or with
 size=<bytes> to a body of that many bytes that repeat the values 0 to
@@ -88,6 +91,12 @@ class StatusHandler(http.server.BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(reply)))
             self.end_headers()
             self.wfile.write(reply)
+            return
+        if self.path.strip("/") == "redirect":
+            self.send_response(307)
+            self.send_header("Location", f"http://{self.headers['Host']}/echo")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
             return
         code = int(self.path.strip("/").split("/")[0] or 200)
         self.send_response(code)
