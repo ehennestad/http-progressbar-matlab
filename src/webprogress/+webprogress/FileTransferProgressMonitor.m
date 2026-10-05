@@ -53,7 +53,7 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
     end
 
     properties (Access = protected)
-        StartTime                   % Time when transfer started
+        StartTime                   % Time when this monitor saw the first byte
         LastUpdateTime              % Time when progress was last updated
         HasTransferStarted = false  % Whether download or upload has started
         WaitbarHandle               % Handle to waitbar dialog
@@ -190,12 +190,15 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
                 return
             end
 
-            % The remaining time is estimated from the bytes this monitor
-            % has seen arrive. A body byte arrives only after a resumed
-            % download has set StartBytes, so StartBytes at that moment
-            % is where the measurement starts.
+            % The remaining time and the completion message are measured
+            % from the first byte this monitor sees, so the time before
+            % it, such as between creating a monitor and the first
+            % request, counts for neither. A body byte arrives only after
+            % a resumed download has set StartBytes, so StartBytes at
+            % that moment is where the byte count starts.
             if isempty(obj.BaselineBytes) && ~isempty(obj.Value) && obj.Value > 0
                 obj.BaselineBytes = obj.StartBytes;
+                obj.StartTime = tic;
             end
 
             % A message without a body reports Max as 0. After an upload,

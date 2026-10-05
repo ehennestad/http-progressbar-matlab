@@ -264,6 +264,19 @@ classdef FileTransferProgressMonitorTest < matlab.unittest.TestCase
             testCase.verifySubstring(output, 'Downloaded 10 MB/10 MB (100%). Completed in')
         end
 
+        function testCompletionTimeStartsAtFirstByte(testCase)
+            % A monitor may exist for a while before its transfer, as a
+            % MultipartProgressMonitor does between parts. That time is
+            % not part of the transfer.
+            monitor = createCommandWindowMonitor(testCase.FileSizeBytes, 'data.bin');
+            pause(1.2)
+            captureOutput(@() setValues(monitor, testCase.FileSizeBytes));
+
+            output = captureOutput(@() monitor.done());
+
+            testCase.verifySubstring(output, 'Completed in 0 second')
+        end
+
         function testShortenFilenameKeepsStartAndEnd(testCase)
             filename = '123456789012_middle_part_ABCDEFGHIJKL';
 
