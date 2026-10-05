@@ -126,6 +126,13 @@ classdef UploadRangeTest < matlab.unittest.TestCase
                 'webprogress:upload:InvalidNumBytes')
         end
 
+        function testZeroNumBytesErrors(testCase)
+            % A part loop whose last step computes 0 bytes must not send
+            % an empty part.
+            testCase.verifyError(@() testCase.uploadToEcho('NumBytes', 0), ...
+                'MATLAB:validators:mustBePositive')
+        end
+
         function testPartsShareOneDisplay(testCase)
             partSize = 2^20;
             monitor = webprogress.MultipartProgressMonitor(testCase.FileSizeBytes, ...

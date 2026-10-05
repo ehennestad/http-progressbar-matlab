@@ -46,12 +46,12 @@ function [wasSuccess, response] = upload(filePath, url, options)
 %   into it, instead of from its first byte. The default is 0.
 %
 %   [...] = webprogress.upload(...,NumBytes=N) sends N bytes of the file.
-%   The default is Inf, which sends the file to its end. With Offset or
-%   NumBytes, the request carries no header that names the range, and
-%   the Content-Type is not taken from the file. Add the headers that
-%   the service expects, such as a Content-Type, with RequestMessage.
-%   Use Offset and NumBytes to send one part of a file that a storage
-%   service receives in several requests.
+%   N must be at least 1. The default is Inf, which sends the file to its
+%   end. With Offset or NumBytes, the request carries no header that
+%   names the range, and the Content-Type is not taken from the file. Add
+%   the headers that the service expects, such as a Content-Type, with
+%   RequestMessage. Use Offset and NumBytes to send one part of a file
+%   that a storage service receives in several requests.
 %
 %   [...] = webprogress.upload(...,ProgressMonitor=MONITOR) shows
 %   progress in MONITOR, a webprogress.MultipartProgressMonitor, which
@@ -78,7 +78,7 @@ function [wasSuccess, response] = upload(filePath, url, options)
         options.Figure         {mustBeFigureOrEmpty}             = []
         options.RequestMessage matlab.net.http.RequestMessage    = matlab.net.http.RequestMessage.empty
         options.Offset         (1,1) double {mustBeNonnegative, mustBeInteger} = 0
-        options.NumBytes       (1,1) double {mustBeNonnegative, mustBeIntegerOrInf} = Inf
+        options.NumBytes       (1,1) double {mustBePositive, mustBeIntegerOrInf} = Inf
         options.ProgressMonitor webprogress.MultipartProgressMonitor ...
                                                                  = webprogress.MultipartProgressMonitor.empty
     end
