@@ -150,7 +150,7 @@ classdef UploadRangeTest < matlab.unittest.TestCase
 
             testCase.verifyError(@() provider.getData(4096), 'webprogress:upload:FileChanged')
 
-            openFiles = arrayfun(@fopen, openedFiles(), 'UniformOutput', false);
+            openFiles = arrayfun(@fopen, listOpenFileIds(), 'UniformOutput', false);
             testCase.verifyFalse(ismember(testCase.FilePath, openFiles))
         end
 
@@ -219,5 +219,16 @@ classdef UploadRangeTest < matlab.unittest.TestCase
             testCase.verifyEqual(echo.head(:), double(expected(1:min(16, end))))
             testCase.verifyEqual(echo.tail(:), double(expected(max(end-15, 1):end)))
         end
+    end
+end
+
+function fileIds = listOpenFileIds()
+    %listOpenFileIds - Return the identifiers of the files MATLAB has open
+    %   openedFiles exists from R2024a, and fopen('all') raises a
+    %   staged-removal error in later releases, so the release decides.
+    if isMATLABReleaseOlderThan("R2024a")
+        fileIds = fopen('all');
+    else
+        fileIds = openedFiles();
     end
 end
