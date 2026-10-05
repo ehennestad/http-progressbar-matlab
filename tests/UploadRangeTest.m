@@ -57,6 +57,10 @@ classdef UploadRangeTest < matlab.unittest.TestCase
         end
 
         function testRangeAnnouncesContentLength(testCase)
+            % A range has a known size, so the request announces it in
+            % Content-Length and sends the body whole rather than in chunks of
+            % unannounced size. A service can then check that the part arrived
+            % complete.
             echo = testCase.uploadToEcho('Offset', 1000, 'NumBytes', 5000);
 
             testCase.verifyEqual(echo.content_length, '5000')
@@ -163,6 +167,8 @@ classdef UploadRangeTest < matlab.unittest.TestCase
         end
 
         function testPartsShareOneDisplay(testCase)
+            % A file sent in parts shows one display for the whole file, opened
+            % once and closed by close(monitor), rather than one per request.
             partSize = 2^20;
             monitor = webprogress.MultipartProgressMonitor(testCase.FileSizeBytes, ...
                 'DisplayMode', 'Command Window', 'UpdateInterval', 0);
@@ -183,6 +189,8 @@ classdef UploadRangeTest < matlab.unittest.TestCase
         end
 
         function testFailedPartIsNotCounted(testCase)
+            % A part the server rejects is sent again later, so it must not count
+            % toward CompletedBytes, which is what a caller saves to resume.
             monitor = webprogress.MultipartProgressMonitor(testCase.FileSizeBytes, ...
                 'DisplayMode', 'Command Window', 'UpdateInterval', 0);
             testCase.addTeardown(@() delete(monitor))

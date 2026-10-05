@@ -107,6 +107,9 @@ classdef DownloadResumeTest < matlab.unittest.TestCase
         end
 
         function testIgnoredRangeGivesWholeFile(testCase)
+            % A server that ignores Range answers with status 200 and the whole
+            % file. Appending that to the partial file would corrupt it, so the
+            % body replaces the partial file.
             testCase.downloadFirstPart(testCase.fileUrl( ...
                 'content', repmat('a', 1, 50), 'etag', 'e1'))
 
@@ -182,6 +185,8 @@ classdef DownloadResumeTest < matlab.unittest.TestCase
         end
 
         function testFailedRequestLeavesPartialFilesUnchanged(testCase)
+            % A 403 can mean that a presigned URL has expired. The part received
+            % so far must survive it, so that a call with a fresh URL continues.
             testCase.downloadFirstPart(testCase.fileUrl('content', repmat('a', 1, 50)))
             partBefore = readBytes(testCase.Target + ".part");
             stateBefore = readBytes(testCase.Target + ".part.json");
@@ -249,6 +254,8 @@ classdef DownloadResumeTest < matlab.unittest.TestCase
         end
 
         function testUnknownCompleteLengthCompletesFile(testCase)
+            % Content-Range may give the complete length as "*" when the server
+            % does not know it. A resume must still complete the file.
             content = repmat('0123456789', 1, 5);
             url = testCase.fileUrl('content', content, 'complete_length', '*');
             testCase.downloadFirstPart(url)
@@ -286,6 +293,10 @@ classdef DownloadResumeTest < matlab.unittest.TestCase
         end
 
         function testCompressedResumeErrorsAndKeepsPartialFiles(testCase)
+            % The HTTP client decodes a compressed body while it saves it, so the
+            % bytes on disk are not the bytes the server counts in its ranges and
+            % lengths. Such a body can be neither checked nor continued, and the
+            % partial files are left as they were.
             testCase.downloadFirstPart(testCase.fileUrl( ...
                 'content', repmat('a', 1, 50), 'etag', 'e1'))
             partBefore = readBytes(testCase.Target + ".part");
@@ -300,6 +311,8 @@ classdef DownloadResumeTest < matlab.unittest.TestCase
         end
 
         function testCompressedDownloadErrorsAndLeavesNoFiles(testCase)
+            % A compressed first response is refused for the same reason, before
+            % any file is written.
             testCase.verifyError(@() downloadQuietly(testCase.Target, testCase.fileUrl( ...
                 'content', repmat('a', 1, 50), 'gzip', '1')), ...
                 'webprogress:download:ContentEncoded')
@@ -359,6 +372,9 @@ classdef DownloadResumeTest < matlab.unittest.TestCase
         end
 
         function testMissingEntityTagIsDownloadedFromStart(testCase)
+            % The ETag is the only proof that the file on the server is still the
+            % one the partial bytes came from. Without one no state file is kept,
+            % and the next call downloads from the start.
             testCase.downloadFirstPart(testCase.fileUrl( ...
                 'content', repmat('a', 1, 50), 'no_etag', '1'))
             testCase.verifyEqual(listFiles(testCase.Folder), "data.txt.part")
@@ -393,6 +409,8 @@ classdef DownloadResumeTest < matlab.unittest.TestCase
         end
 
         function testWeakEntityTagInStateFileIsNotUsed(testCase)
+            % A weak ETag cannot prove that two responses carry the same bytes, so
+            % a state file that holds one counts as no state.
             url = testCase.fileUrl('content', repmat('a', 1, 50), 'etag', 'e1');
             testCase.downloadFirstPart(url)
             writeText(testCase.Target + ".part.json", ...
