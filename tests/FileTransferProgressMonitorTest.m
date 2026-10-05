@@ -431,6 +431,53 @@ classdef FileTransferProgressMonitorTest < matlab.unittest.TestCase
             testCase.verifyTrue(monitor.IsCancelled)
         end
 
+        function testIsCancelledAsksCancelRequestedFcn(testCase)
+            % webprogress.upload reads IsCancelled before it sends a part,
+            % so a cancel requested between two parts stops the next one
+            % before any byte is sent.
+            spy = TransferCallbackSpy(0);
+            monitor = webprogress.MultipartProgressMonitor(testCase.FileSizeBytes, ...
+                'DisplayMode', 'None', 'CancelRequestedFcn', @spy.isCancelRequested);
+
+            testCase.verifyTrue(monitor.IsCancelled)
+            testCase.verifyEqual(spy.NumCancelChecks, 1)
+        end
+
+        function testCompletedPartIsReportedAtOnce(testCase)
+            % The throttle holds back the last bytes of a part, and
+            % counting the part reports them without waiting.
+            spy = TransferCallbackSpy();
+            monitor = webprogress.MultipartProgressMonitor(testCase.FileSizeBytes, ...
+                'DisplayMode', 'None', 'UpdateInterval', 3600, ...
+                'ProgressFcn', @spy.record);
+            monitor.Direction = matlab.net.http.MessageType.Request;
+            setValues(monitor, [1, 2] * 2^20)
+            numReportsBeforeCount = numel(spy.Reports);
+
+            monitor.addCompletedBytes(2 * 2^20);
+
+            testCase.verifyEqual(numReportsBeforeCount, 1)
+            testCase.verifyEqual(spy.Reports(end).TransferredBytes, 2 * 2^20)
+        end
+
+        function testMultipartCloseAfterCancelPrintsNoCompletion(testCase)
+            % A cancelled upload is not complete, so close prints no
+            % completion message after the last progress line.
+            spy = TransferCallbackSpy(1);
+            monitor = webprogress.MultipartProgressMonitor(testCase.FileSizeBytes, ...
+                'DisplayMode', 'Command Window', 'UpdateInterval', 0, ...
+                'ProgressFcn', @spy.record, ...
+                'CancelRequestedFcn', @spy.isCancelRequested);
+            monitor.Direction = matlab.net.http.MessageType.Request;
+            captureOutput(@() setValues(monitor, 1 * 2^20));
+            testCase.verifyError(@() captureOutput(@() setValues(monitor, 2 * 2^20)), ...
+                'webprogress:progressMonitor:Cancelled')
+
+            output = captureOutput(@() close(monitor));
+
+            testCase.verifyEmpty(output)
+        end
+
         function testInvalidProgressFcnErrors(testCase)
             testCase.verifyError( ...
                 @() webprogress.FileTransferProgressMonitor('ProgressFcn', 'disp'), ...

@@ -79,6 +79,7 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
         PreviousMessage = ''        % Previous message displayed in command window
         BodyDirection               % Direction of the message that carries the file
         BodySizeBytes               % Size in bytes of the message that carries the file
+        BodyBytes = 0               % Bytes transferred of the message that carries the file
         HasDisplayedProgress = false % Whether progress has been displayed at least once
         WasCancelled = false        % Whether the user cancelled the transfer
         BaselineBytes = []          % Bytes of the file transferred when this monitor saw the first byte
@@ -129,11 +130,13 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
                 obj.reportProgress()
             end
 
+            % A cancelled transfer is not complete, so the last progress
+            % line stays as it is.
             if ~isempty(obj.ProgressDialogHandle)
                 obj.closeProgressDialog();
             elseif ~isempty(obj.WaitbarHandle)
                 obj.closeWaitbar();
-            elseif ~isempty(obj.PreviousMessage) && obj.UseCommandWindow
+            elseif ~isempty(obj.PreviousMessage) && obj.UseCommandWindow && ~obj.WasCancelled
                 msgStr = obj.getTransferCompletedMessage();
                 obj.updateCommandWindowMessage(msgStr)
             end
@@ -213,6 +216,20 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
                 obj.stopTransfer()
             end
 
+            % The reply to an upload carries no file bytes, so it is not
+            % progress, and its byte count must not replace the uploaded
+            % one. A cancel that arrives while it is received still has
+            % to be noticed, because the progress dialog only reports it
+            % when the monitor asks.
+            isReplyToUpload = isequal(obj.BodyDirection, matlab.net.http.MessageType.Request) ...
+                && isequal(obj.Direction, matlab.net.http.MessageType.Response);
+            if isReplyToUpload
+                if obj.cancelWasRequested()
+                    obj.stopTransfer()
+                end
+                return
+            end
+
             % The remaining time and the completion message are measured
             % from the first byte this monitor sees, so the time before
             % it, such as between creating a monitor and the first
@@ -224,14 +241,16 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
                 obj.StartTime = tic;
             end
 
-            % A message without a body reports Max as 0. After an upload,
-            % the server's empty response switches Direction to Response
-            % while Value keeps the uploaded byte count. Remember the
-            % message that carries the file so that progress and the
-            % completion message keep describing that transfer.
+            % A message without a body reports Max as 0. Remember the
+            % message that carries the file, so that the reply to an
+            % upload is told apart from the upload itself, and keep the
+            % bytes of that message where the reply cannot overwrite them.
             if ~isempty(obj.Max) && obj.Max > 0
                 obj.BodyDirection = obj.Direction;
                 obj.BodySizeBytes = obj.Max;
+            end
+            if ~isempty(obj.Value)
+                obj.BodyBytes = double(obj.Value);
             end
 
             % Display the first progress as soon as it arrives.
@@ -567,7 +586,7 @@ classdef FileTransferProgressMonitor < matlab.net.http.ProgressMonitor
 
         function transferredBytes = getTransferredBytes(obj)
         %getTransferredBytes - Return the bytes of the file transferred so far
-            transferredBytes = obj.StartBytes + double(obj.Value);
+            transferredBytes = obj.StartBytes + obj.BodyBytes;
         end
 
         function fileSizeBytes = getFileSizeBytes(obj)

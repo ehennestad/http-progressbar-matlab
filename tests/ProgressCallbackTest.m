@@ -75,6 +75,33 @@ classdef ProgressCallbackTest < matlab.unittest.TestCase
             testCase.verifyEqual(spy.Reports(end).TotalBytes, testCase.FileSizeBytes)
         end
 
+        function testUploadReportsOnlyTheFile(testCase)
+            % The server answers with a JSON body. Its bytes are not
+            % progress of the upload, so every report describes the file.
+            spy = TransferCallbackSpy();
+
+            captureOutput(@() webprogress.upload(testCase.FilePath, ...
+                testCase.ServerUrl + "/echo", DisplayMode="None", ProgressFcn=@spy.record));
+
+            testCase.verifyEqual([spy.Reports.ActionName], ...
+                repmat("Upload", 1, numel(spy.Reports)))
+            testCase.verifyEqual(spy.Reports(end).TransferredBytes, testCase.FileSizeBytes)
+            testCase.verifyEqual(spy.Reports(end).TotalBytes, testCase.FileSizeBytes)
+        end
+
+        function testCancelledMonitorStopsPartBeforeSend(testCase)
+            % The monitor's CancelRequestedFcn already asks for a stop, so
+            % the part is not sent. The file does not exist, which would
+            % raise FileNotFound if the upload got that far.
+            spy = TransferCallbackSpy(0);
+            monitor = webprogress.MultipartProgressMonitor(testCase.FileSizeBytes, ...
+                'DisplayMode', 'None', 'CancelRequestedFcn', @spy.isCancelRequested);
+            missingPath = fullfile(testCase.Folder, 'missing.bin');
+
+            testCase.verifyError(@() webprogress.upload(missingPath, testCase.statusUrl(201), ...
+                'NumBytes', 1000, 'ProgressMonitor', monitor), 'webprogress:upload:Cancelled')
+        end
+
         function testDownloadCancelledBeforeStartSendsNothing(testCase)
             spy = TransferCallbackSpy(0);
             target = fullfile(testCase.Folder, 'data.bin');

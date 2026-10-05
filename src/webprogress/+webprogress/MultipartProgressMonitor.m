@@ -26,9 +26,10 @@ classdef (Sealed) MultipartProgressMonitor < webprogress.FileTransferProgressMon
 %
 %   Call close(monitor) after the last part to close the dialog or to
 %   print the completion message. Deleting the monitor also closes the
-%   dialog. If the user presses Cancel, IsCancelled becomes true and
-%   webprogress.upload raises the error webprogress:upload:Cancelled for
-%   the part in progress and for each later part.
+%   dialog. If the user presses Cancel, or CancelRequestedFcn returns
+%   true, IsCancelled becomes true and webprogress.upload raises the
+%   error webprogress:upload:Cancelled for the part in progress and for
+%   each later part, which it does not send.
 %
 %   Example: Upload a file in parts of 100 MB
 %       fileInfo = dir(filePath);
@@ -47,7 +48,7 @@ classdef (Sealed) MultipartProgressMonitor < webprogress.FileTransferProgressMon
 
     properties (Dependent)
         CompletedBytes  % Bytes of the parts that were sent successfully
-        IsCancelled     % Whether the user cancelled the transfer
+        IsCancelled     % Whether the transfer was cancelled, by the Cancel button or CancelRequestedFcn
     end
 
     properties (Access = private)
@@ -96,7 +97,11 @@ classdef (Sealed) MultipartProgressMonitor < webprogress.FileTransferProgressMon
         end
 
         function tf = get.IsCancelled(obj)
-            tf = obj.WasCancelled;
+        %get.IsCancelled - Return whether the transfer was cancelled
+        %   CancelRequestedFcn is asked as well, so that a cancel
+        %   requested between two parts stops the next part before it
+        %   is sent, not at its first progress report.
+            tf = obj.WasCancelled || isCancelRequested(obj.CancelRequestedFcn);
         end
     end
 
@@ -111,6 +116,10 @@ classdef (Sealed) MultipartProgressMonitor < webprogress.FileTransferProgressMon
             end
             obj.CompletedPartBytes = obj.CompletedPartBytes + numBytes;
             obj.PartBytes = 0;
+            % The throttle may have held back the last bytes of the part,
+            % and done does not report them because it keeps the display
+            % open between parts.
+            obj.reportProgress()
         end
     end
 

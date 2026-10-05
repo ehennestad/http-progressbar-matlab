@@ -88,6 +88,19 @@ classdef UploadTest < matlab.unittest.TestCase
             testCase.verifyThat(output, ~ContainsSubstring('Downloaded'))
         end
 
+        function testCompletionMessageDescribesUploadWithReplyBody(testCase)
+            % The server answers with a JSON body, which the display must
+            % not describe as a download.
+            import matlab.unittest.constraints.ContainsSubstring
+
+            output = captureOutput(@() webprogress.upload(testCase.FilePath, ...
+                testCase.ServerUrl + "/echo", ...
+                'DisplayMode', 'Command Window', 'UpdateInterval', 0.001));
+
+            testCase.verifySubstring(output, 'Uploaded 3 MB/3 MB (100%). Completed in')
+            testCase.verifyThat(output, ~ContainsSubstring('Downloaded'))
+        end
+
         function testTitleShowsLocalFileName(testCase)
             output = captureOutput(@() webprogress.upload(testCase.FilePath, ...
                 testCase.statusUrl(201), ...
