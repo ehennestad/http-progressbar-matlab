@@ -9,6 +9,21 @@ classdef DownloadTargetTest < matlab.unittest.TestCase
         Folder           % Empty folder that is deleted after each test
     end
 
+    properties (TestParameter)
+        % Content-Disposition names of files that MATLAB runs. Windows
+        % removes the trailing period and space, and %20 is a space in
+        % the query of the served URL.
+        RunnableName = struct( ...
+            'MFile', 'disp.m', ...
+            'LiveScript', 'startup.mlx', ...
+            'App', 'tool.mlapp', ...
+            'PCode', 'helper.p', ...
+            'StateflowChart', 'chart.sfx', ...
+            'UppercaseExtension', 'disp.M', ...
+            'TrailingPeriod', 'disp.m.', ...
+            'TrailingSpace', 'disp.m%20')
+    end
+
     methods (TestClassSetup)
         function addFoldersToPath(testCase)
             testsFolder = fileparts(mfilename('fullpath'));
@@ -84,12 +99,53 @@ classdef DownloadTargetTest < matlab.unittest.TestCase
             testCase.verifyEqual(fileread(target), 'new')
         end
 
-        function testRepeatedDownloadToFolderReplacesFile(testCase)
+        function testFolderTargetKeepsExistingFile(testCase)
             downloadQuietly(testCase.Folder, testCase.fileUrl('README', 'content', 'first'));
 
-            downloadQuietly(testCase.Folder, testCase.fileUrl('README', 'content', 'second'));
+            testCase.verifyError(@() downloadQuietly(testCase.Folder, ...
+                testCase.fileUrl('README', 'content', 'second')), ...
+                'webprogress:download:FileExists')
 
-            testCase.verifyEqual(fileread(fullfile(testCase.Folder, 'README')), 'second')
+            testCase.verifyEqual(fileread(fullfile(testCase.Folder, 'README')), 'first')
+            testCase.verifyEqual(listFiles(testCase.Folder), "README")
+        end
+
+        function testFolderTargetKeepsExistingFolder(testCase)
+            % Moving the file onto a folder name would move it into the
+            % folder instead.
+            mkdir(fullfile(testCase.Folder, 'data'))
+            url = testCase.fileUrl('download', 'filename', 'data');
+
+            testCase.verifyError(@() downloadQuietly(testCase.Folder, url), ...
+                'webprogress:download:FileExists')
+
+            testCase.verifyEmpty(listFiles(testCase.Folder))
+            testCase.verifyEmpty(listFiles(fullfile(testCase.Folder, 'data')))
+        end
+
+        function testContentDispositionRunnableNameErrors(testCase, RunnableName)
+            url = testCase.fileUrl('download', 'filename', RunnableName);
+
+            testCase.verifyError(@() downloadQuietly(testCase.Folder, url), ...
+                'webprogress:download:RunnableFilename')
+
+            testCase.verifyEmpty(listFiles(testCase.Folder))
+        end
+
+        function testContentDispositionMexNameErrors(testCase)
+            url = testCase.fileUrl('download', 'filename', "tool." + mexext());
+
+            testCase.verifyError(@() downloadQuietly(testCase.Folder, url), ...
+                'webprogress:download:RunnableFilename')
+
+            testCase.verifyEmpty(listFiles(testCase.Folder))
+        end
+
+        function testUrlNamedRunnableFileIsSaved(testCase)
+            % The caller chose the URL, so its name is kept.
+            downloadQuietly(testCase.Folder, testCase.fileUrl('script.m'));
+
+            testCase.verifyEqual(listFiles(testCase.Folder), "script.m")
         end
 
         function testFailedDownloadKeepsExistingFile(testCase)
