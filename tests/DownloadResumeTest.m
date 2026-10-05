@@ -6,6 +6,16 @@ classdef DownloadResumeTest < matlab.unittest.TestCase
     %   continues it. The tests are skipped when python3 or a Unix shell is
     %   unavailable.
 
+    properties (TestParameter)
+        % State files that do not hold a saved state: one cut off while
+        % it was written, an empty one, and two of another shape.
+        invalidState = struct( ...
+            'truncated', '{"ETag":"', ...
+            'empty', '', ...
+            'array', '[]', ...
+            'numericETag', '{"ETag":1,"TotalBytes":50}');
+    end
+
     properties (Constant)
         FirstPartBytes = 20 % Bytes after which the server cuts off a first download
     end
@@ -287,9 +297,14 @@ classdef DownloadResumeTest < matlab.unittest.TestCase
             testCase.verifyTrue(isfile(testCase.Target + ".part.json"))
         end
 
-        function testResumeRequestsAskForIdentityEncoding(testCase)
-            testCase.downloadFirstPart(testCase.fileUrl('content', repmat('a', 1, 50)))
-            downloadQuietly(testCase.Target, testCase.fileUrl('content', repmat('a', 1, 50)));
+        function testResumeRequestsSendExpectedHeaders(testCase)
+            % Every request asks for the identity coding. The second asks
+            % for the rest of the file on the condition that it still has
+            % the saved ETag, quotes included, which a server that honours
+            % If-Range compares byte for byte.
+            url = testCase.fileUrl('content', repmat('a', 1, 50), 'etag', 'e1');
+            testCase.downloadFirstPart(url)
+            downloadQuietly(testCase.Target, url);
 
             requests = testCase.readFileRequests();
 
@@ -298,6 +313,7 @@ classdef DownloadResumeTest < matlab.unittest.TestCase
             testCase.verifyEqual(requests{end}.headers.Accept_Encoding, 'identity')
             testCase.verifyEqual(requests{end}.headers.Range, ...
                 sprintf('bytes=%d-', testCase.FirstPartBytes))
+            testCase.verifyEqual(requests{end}.headers.If_Range, '"e1"')
         end
 
         function testFirstFailedRequestLeavesNoFiles(testCase)
@@ -333,22 +349,6 @@ classdef DownloadResumeTest < matlab.unittest.TestCase
             testCase.verifyEqual(listFiles(testCase.Folder), "data.txt")
         end
 
-        function testWeakEntityTagInStateFileIsNotUsed(testCase)
-            url = testCase.fileUrl('content', repmat('a', 1, 50), 'etag', 'e1');
-            testCase.downloadFirstPart(url)
-            writeText(testCase.Target + ".part.json", ...
-                '{"ETag":"W/\"e1\"","TotalBytes":50}')
-
-            downloadQuietly(testCase.Target, testCase.fileUrl( ...
-                'content', repmat('b', 1, 50), 'etag', 'e1'));
-
-            testCase.verifyEqual(fileread(testCase.Target), repmat('b', 1, 50))
-        end
-
-        function testMissingStateFileIsDownloadedFromStart(testCase)
-            testCase.downloadFirstPart(testCase.fileUrl( ...
-                'content', repmat('a', 1, 50), 'etag', 'e1'))
-            delete(testCase.Target + ".part.json")
         function testIncompleteDownloadWithoutETagDoesNotAdviseResume(testCase)
             % Without an ETag no state file is written, so a later call
             % with Resume=true would start from the beginning. The error
@@ -371,6 +371,37 @@ classdef DownloadResumeTest < matlab.unittest.TestCase
             testCase.verifyThat(message, ~ContainsSubstring('Resume=true'))
         end
 
+        function testWeakEntityTagInStateFileIsNotUsed(testCase)
+            url = testCase.fileUrl('content', repmat('a', 1, 50), 'etag', 'e1');
+            testCase.downloadFirstPart(url)
+            writeText(testCase.Target + ".part.json", ...
+                '{"ETag":"W/\"e1\"","TotalBytes":50}')
+
+            downloadQuietly(testCase.Target, testCase.fileUrl( ...
+                'content', repmat('b', 1, 50), 'etag', 'e1'));
+
+            testCase.verifyEqual(fileread(testCase.Target), repmat('b', 1, 50))
+        end
+
+        function testMissingStateFileIsDownloadedFromStart(testCase)
+            testCase.downloadFirstPart(testCase.fileUrl( ...
+                'content', repmat('a', 1, 50), 'etag', 'e1'))
+            delete(testCase.Target + ".part.json")
+
+            downloadQuietly(testCase.Target, testCase.fileUrl( ...
+                'content', repmat('b', 1, 50), 'etag', 'e1'));
+
+            testCase.verifyEqual(fileread(testCase.Target), repmat('b', 1, 50))
+            testCase.verifyEqual(listFiles(testCase.Folder), "data.txt")
+        end
+
+        function testInvalidStateFileIsDownloadedFromStart(testCase, invalidState)
+            % A state file that does not hold a saved state, such as one
+            % cut off while it was written, counts as none. The server
+            % would honour a range, which would give "a" followed by "b".
+            testCase.downloadFirstPart(testCase.fileUrl( ...
+                'content', repmat('a', 1, 50), 'etag', 'e1'))
+            writeText(testCase.Target + ".part.json", invalidState)
 
             downloadQuietly(testCase.Target, testCase.fileUrl( ...
                 'content', repmat('b', 1, 50), 'etag', 'e1'));
