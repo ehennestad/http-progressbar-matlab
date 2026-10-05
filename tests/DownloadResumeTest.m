@@ -349,6 +349,28 @@ classdef DownloadResumeTest < matlab.unittest.TestCase
             testCase.downloadFirstPart(testCase.fileUrl( ...
                 'content', repmat('a', 1, 50), 'etag', 'e1'))
             delete(testCase.Target + ".part.json")
+        function testIncompleteDownloadWithoutETagDoesNotAdviseResume(testCase)
+            % Without an ETag no state file is written, so a later call
+            % with Resume=true would start from the beginning. The error
+            % must not tell the user otherwise.
+            import matlab.unittest.constraints.ContainsSubstring
+            url = testCase.fileUrl('content', repmat('a', 1, 50), 'no_etag', '1', ...
+                'truncate', '20');
+
+            errorId = '';
+            message = '';
+            try
+                downloadQuietly(testCase.Target, url);
+            catch exception
+                errorId = exception.identifier;
+                message = exception.message;
+            end
+
+            testCase.verifyEqual(errorId, 'webprogress:download:IncompleteTransfer')
+            testCase.verifyThat(message, ContainsSubstring('no ETag'))
+            testCase.verifyThat(message, ~ContainsSubstring('Resume=true'))
+        end
+
 
             downloadQuietly(testCase.Target, testCase.fileUrl( ...
                 'content', repmat('b', 1, 50), 'etag', 'e1'));

@@ -280,7 +280,7 @@ function receiveResumable(uri, partialFile, stateFile, monitorOpts)
         raiseRequestFailed(response)
     end
 
-    assertCompleteResumable(partialFile, consumer.ExpectedBytes, consumer.TotalBytes)
+    assertCompleteResumable(partialFile, stateFile, consumer.ExpectedBytes, consumer.TotalBytes)
 end
 
 function [response, consumer] = sendResumableRequest(uri, partialFile, stateFile, ...
@@ -354,7 +354,7 @@ function [entityTag, totalBytes] = readState(stateFile)
     end
 end
 
-function assertCompleteResumable(partialFile, expectedBytes, totalBytes)
+function assertCompleteResumable(partialFile, stateFile, expectedBytes, totalBytes)
     %assertCompleteResumable - Raise an error if the partial file is not complete
     %   expectedBytes is the size of the partial file after the whole
     %   body, and totalBytes the length of the complete file. For a 206
@@ -362,24 +362,32 @@ function assertCompleteResumable(partialFile, expectedBytes, totalBytes)
     %   the complete length when the server does not know it ("*") or
     %   sends less than the rest of the file. For a 200 response both are
     %   the Content-Length. Either is NaN when the response does not give
-    %   it, and a transfer that neither describes cannot be checked.
+    %   it, and a transfer that neither describes cannot be checked. The
+    %   error says how to continue: only a partial file with a state file
+    %   can be resumed, and there is none when the server gave the file
+    %   no strong ETag.
     receivedBytes = 0;
     if isfile(partialFile)
         fileInfo = dir(partialFile);
         receivedBytes = fileInfo.bytes;
     end
 
+    if isfile(stateFile)
+        advice = sprintf("The part received is kept in ""%s"". Call " + ...
+            "webprogress.download again with Resume=true to continue.", partialFile);
+    else
+        advice = "The server gave the file no ETag, so the download cannot be " + ...
+            "continued from the part received. Download the file again.";
+    end
+
     if ~isnan(totalBytes) && receivedBytes ~= totalBytes
         error("webprogress:download:IncompleteTransfer", ...
-            "The download stopped after %d of %d bytes. The part received is kept " + ...
-            "in ""%s"". Call webprogress.download again with Resume=true to continue.", ...
-            receivedBytes, totalBytes, partialFile)
+            "The download stopped after %d of %d bytes. %s", ...
+            receivedBytes, totalBytes, advice)
     elseif isnan(totalBytes) && ~isnan(expectedBytes) && receivedBytes ~= expectedBytes
         error("webprogress:download:IncompleteTransfer", ...
             "The download stopped after %d bytes, before the %d bytes the server sent " + ...
-            "had arrived. The part received is kept in ""%s"". Call " + ...
-            "webprogress.download again with Resume=true to continue.", ...
-            receivedBytes, expectedBytes, partialFile)
+            "had arrived. %s", receivedBytes, expectedBytes, advice)
     end
 end
 
