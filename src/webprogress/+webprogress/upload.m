@@ -66,6 +66,11 @@ function [wasSuccess, response] = upload(filePath, url, options)
 %   the error webprogress:upload:Cancelled, also when it has outputs. The
 %   Cancel button of the progress dialog stops the upload in the same way.
 %
+%   [...] = webprogress.upload(...,DataTimeout=SECONDS) stops the upload
+%   when no data is exchanged for SECONDS seconds, with the error
+%   webprogress:upload:TransferStalled, also when it has outputs. The
+%   default is 60. Use Inf to wait without limit.
+%
 %   [...] = webprogress.upload(...,ProgressMonitor=MONITOR) shows
 %   progress in MONITOR, a webprogress.MultipartProgressMonitor, which
 %   stays open after the upload. Pass the same monitor to the upload of
@@ -97,6 +102,7 @@ function [wasSuccess, response] = upload(filePath, url, options)
                                                                  = webprogress.MultipartProgressMonitor.empty
         options.ProgressFcn    {mustBeFunctionHandleOrEmpty}     = []
         options.CancelRequestedFcn {mustBeFunctionHandleOrEmpty} = []
+        options.DataTimeout    (1,1) double {mustBePositive}     = 60
     end
 
     if ~isempty(options.Filename)
@@ -139,7 +145,8 @@ function [wasSuccess, response] = upload(filePath, url, options)
     webOpts = matlab.net.http.HTTPOptions(...
         'ProgressMonitorFcn', progressMonitorFcn, ...
         'UseProgressMonitor', true, ...
-        'ConnectTimeout', 20);
+        'ConnectTimeout', 20, ...
+        'DataTimeout', options.DataTimeout);
 
     if ~isfile(filePath)
         error("webprogress:upload:FileNotFound", ...
@@ -184,11 +191,19 @@ function [wasSuccess, response] = upload(filePath, url, options)
     try
         [response, ~, ~] = req.send(uri, webOpts);
     catch exception
-        % The progress monitor stops a cancelled transfer with an error.
+        % The progress monitor stops a cancelled transfer with an error,
+        % and the HTTP client one that exchanges no data for DataTimeout
+        % seconds.
         if isCancellation(exception)
             raiseCancelled()
         end
         raiseIfCancelled(cancelRequestedFcn)
+        if isDataTimeout(exception)
+            error("webprogress:upload:TransferStalled", ...
+                "No data was exchanged for %g seconds, so the upload was stopped. Check " + ...
+                "the connection and try again, or set DataTimeout to allow a longer pause.", ...
+                options.DataTimeout)
+        end
         rethrow(exception)
     end
     raiseIfCancelled(cancelRequestedFcn)

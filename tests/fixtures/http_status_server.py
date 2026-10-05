@@ -7,7 +7,10 @@ first and last bytes, the Content-Length and Transfer-Encoding headers of
 the request (null when absent), and the list of its Content-Type headers.
 A PUT or POST request to /redirect receives status 307 with a Location
 header that points to /echo, so a client that follows it sends the body
-again. A GET request to /<code> receives status <code> with an HTML error
+again. A PUT or POST request with read_delay=<seconds> in its query makes
+the server pause for that long after reading the first kilobyte of the
+body, so that the upload stalls. A GET request to /<code> receives status
+<code> with an HTML error
 page. A GET request to /files/<name> receives status 200 with a text/plain
 body. Its query can set the body with content=<text>, or with
 size=<bytes> to a body of that many bytes that repeat the values 0 to
@@ -57,8 +60,13 @@ file_requests = []
 
 
 class StatusHandler(http.server.BaseHTTPRequestHandler):
-    def _read_body(self):
-        """Return the request body, decoding a chunked transfer coding."""
+    def _read_body(self, read_delay):
+        """Return the request body, decoding a chunked transfer coding.
+
+        With a read_delay, the server pauses for that many seconds after
+        the first kilobyte of a body with a Content-Length, so that the
+        client's upload stalls.
+        """
         if self.headers.get("Transfer-Encoding", "").lower() == "chunked":
             body = b""
             while True:
@@ -70,13 +78,21 @@ class StatusHandler(http.server.BaseHTTPRequestHandler):
                     return body
                 body += self.rfile.read(size)
                 self.rfile.readline()
-        return self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        length = int(self.headers.get("Content-Length", 0))
+        if read_delay > 0 and length > 1024:
+            body = self.rfile.read(1024)
+            time.sleep(read_delay)
+            return body + self.rfile.read(length - 1024)
+        return self.rfile.read(length)
 
     def _respond(self):
+        parts = urlsplit(self.path)
+        query = parse_qs(parts.query)
+        path = parts.path.strip("/")
         # Read the whole request body before responding, so the client
         # finishes sending the file.
-        body = self._read_body()
-        if self.path.strip("/") == "echo":
+        body = self._read_body(float(query.get("read_delay", ["0"])[0]))
+        if path == "echo":
             reply = json.dumps({
                 "length": len(body),
                 "sum": sum(body),
@@ -92,13 +108,13 @@ class StatusHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(reply)
             return
-        if self.path.strip("/") == "redirect":
+        if path == "redirect":
             self.send_response(307)
             self.send_header("Location", f"http://{self.headers['Host']}/echo")
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
-        code = int(self.path.strip("/").split("/")[0] or 200)
+        code = int(path.split("/")[0] or 200)
         self.send_response(code)
         self.send_header("Content-Length", "0")
         self.end_headers()

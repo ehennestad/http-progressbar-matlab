@@ -132,6 +132,17 @@ classdef UploadTest < matlab.unittest.TestCase
             testCase.verifySubstring(output, 'Uploading object name.bin')
             testCase.verifyThat(output, ~ContainsSubstring(testCase.FileName))
         end
+
+        function testStalledUploadErrorsAlsoWithOutput(testCase)
+            % The server pauses for 3 seconds after the first kilobyte,
+            % which is longer than the DataTimeout of the call. A stall is
+            % not a server status, so the error is raised also when the
+            % call has an output.
+            url = testCase.statusUrl(201) + "?read_delay=3";
+
+            testCase.verifyError(@() uploadWithOutput(testCase.FilePath, url), ...
+                'webprogress:upload:TransferStalled')
+        end
     end
 
     methods (Access = private)
@@ -153,6 +164,12 @@ classdef UploadTest < matlab.unittest.TestCase
                 '''DisplayMode'', ''Command Window'');']);
         end
     end
+end
+
+function wasSuccess = uploadWithOutput(filePath, url)
+    %uploadWithOutput - Upload with an output and a short DataTimeout, without printing
+    [~, wasSuccess] = captureOutput(@() webprogress.upload(filePath, url, ...
+        'DisplayMode', 'Command Window', 'DataTimeout', 0.5));
 end
 
 function uploadWithoutOutputs(filePath, url) %#ok<INUSD> used inside evalc

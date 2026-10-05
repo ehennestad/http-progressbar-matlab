@@ -61,6 +61,12 @@ function savedFilePath = download(targetPath, url, options)
 %   kept, so a later call can continue from it. The Cancel button of the
 %   progress dialog stops the download in the same way.
 %
+%   [...] = webprogress.download(...,DataTimeout=SECONDS) stops the
+%   download when no data arrives for SECONDS seconds, with the error
+%   webprogress:download:TransferStalled. The default is 60. With
+%   Resume=true the part received is kept, so a later call continues
+%   from it. Use Inf to wait without limit.
+%
 %   [...] = webprogress.download(...,Resume=TF) keeps the part of the file
 %   received so far when the download fails or is interrupted, and
 %   continues from it on a later call when TF is true. The default is
@@ -78,10 +84,10 @@ function savedFilePath = download(targetPath, url, options)
 %   webprogress.download raises an error if the server responds with a
 %   status that is not a successful 2xx status, if the connection closes
 %   before the number of bytes the server announced in its
-%   Content-Length header has arrived, or if the server announces
-%   different lengths in several Content-Length headers. In each case no
-%   file is saved. With Resume=true, the part received before the error
-%   is kept.
+%   Content-Length header has arrived, if the server announces different
+%   lengths in several Content-Length headers, or if no data arrives for
+%   DataTimeout seconds. In each case no file is saved. With Resume=true,
+%   the part received before the error is kept.
 %
 %   Example: Download a file and print progress in the Command Window
 %       url = "https://allen-brain-observatory.s3.us-west-2" + ...
@@ -106,6 +112,7 @@ function savedFilePath = download(targetPath, url, options)
         options.Resume         (1,1) logical                     = false
         options.ProgressFcn    {mustBeFunctionHandleOrEmpty}     = []
         options.CancelRequestedFcn {mustBeFunctionHandleOrEmpty} = []
+        options.DataTimeout    (1,1) double {mustBePositive}     = 60
     end
 
     cancelRequestedFcn = options.CancelRequestedFcn;
@@ -136,7 +143,13 @@ function savedFilePath = download(targetPath, url, options)
         'FileSizeBytes', options.FileSizeBytes, ...
         'ProgressFcn', options.ProgressFcn, ...
         'CancelRequestedFcn', options.CancelRequestedFcn };
-    
+
+    % The options of each request, whichever path sends it.
+    requestOpts = struct( ...
+        'MonitorOpts', {monitorOpts}, ...
+        'CancelRequestedFcn', cancelRequestedFcn, ...
+        'DataTimeout', options.DataTimeout);
+
     isFolderTarget = isfolder(targetPath);
     if isFolderTarget
         if options.Resume
@@ -166,7 +179,7 @@ function savedFilePath = download(targetPath, url, options)
         targetName = string(name) + string(ext);
         receivedFile = string(fullfile(targetFolder, targetName)) + ".part";
         stateFile = receivedFile + ".json";
-        receiveResumable(uri, receivedFile, stateFile, monitorOpts, cancelRequestedFcn)
+        receiveResumable(uri, receivedFile, stateFile, requestOpts)
     else
         % Receive the file in a temporary file that replaces the target
         % only after a successful download, so an existing file survives a
@@ -183,11 +196,11 @@ function savedFilePath = download(targetPath, url, options)
         consumer = matlab.net.http.io.FileConsumer(receivedFile);
 
         webOpts = createHttpOptions(@(varargin) ...
-            webprogress.FileTransferProgressMonitor(monitorOpts{:}));
+            webprogress.FileTransferProgressMonitor(monitorOpts{:}), options.DataTimeout);
         method = matlab.net.http.RequestMethod.GET;
         req = matlab.net.http.RequestMessage(method, [], []);
 
-        resp = sendRequest(req, uri, webOpts, consumer, cancelRequestedFcn);
+        resp = sendRequest(req, uri, webOpts, consumer, requestOpts);
 
         if resp.StatusCode.getClass() ~= matlab.net.http.StatusClass.Successful
             raiseRequestFailed(resp)
@@ -233,29 +246,39 @@ function savedFilePath = download(targetPath, url, options)
     end
 end
 
-function webOpts = createHttpOptions(progressMonitorFcn)
+function webOpts = createHttpOptions(progressMonitorFcn, dataTimeout)
     %createHttpOptions - Return the HTTP options of a download
     webOpts = matlab.net.http.HTTPOptions(...
         'ProgressMonitorFcn', progressMonitorFcn, ...
         'UseProgressMonitor', true, ...
-        'ConnectTimeout', 20);
+        'ConnectTimeout', 20, ...
+        'DataTimeout', dataTimeout);
 end
 
-function response = sendRequest(req, uri, webOpts, consumer, cancelRequestedFcn)
-    %sendRequest - Send a request, and raise an error if it was cancelled
+function response = sendRequest(req, uri, webOpts, consumer, requestOpts)
+    %sendRequest - Send a request, and raise an error if it was cancelled or stalled
     %   The progress monitor stops a cancelled transfer with an error. A
     %   cancel requested after its last report is found once the
     %   transfer is done. Either way the caller gets the Cancelled error.
+    %   The HTTP client stops a transfer that receives no data for
+    %   DataTimeout seconds, which the caller gets as TransferStalled.
     try
         response = req.send(uri, webOpts, consumer);
     catch exception
         if isCancellation(exception)
             raiseCancelled()
         end
-        raiseIfCancelled(cancelRequestedFcn)
+        raiseIfCancelled(requestOpts.CancelRequestedFcn)
+        if isDataTimeout(exception)
+            error("webprogress:download:TransferStalled", ...
+                "No data arrived for %g seconds, so the download was stopped. Check the " + ...
+                "connection and try again, or set DataTimeout to allow a longer pause. " + ...
+                "With Resume=true, the part received so far is kept and a later call " + ...
+                "continues from it.", requestOpts.DataTimeout)
+        end
         rethrow(exception)
     end
-    raiseIfCancelled(cancelRequestedFcn)
+    raiseIfCancelled(requestOpts.CancelRequestedFcn)
 end
 
 function raiseIfCancelled(cancelRequestedFcn)
@@ -279,7 +302,7 @@ function raiseRequestFailed(response)
         string(response.StatusLine))
 end
 
-function receiveResumable(uri, partialFile, stateFile, monitorOpts, cancelRequestedFcn)
+function receiveResumable(uri, partialFile, stateFile, requestOpts)
     %receiveResumable - Receive a file into a partial file that survives failures
     %   The request asks for the bytes after those in partialFile when
     %   stateFile holds the strong entity tag of the file they came from.
@@ -300,7 +323,7 @@ function receiveResumable(uri, partialFile, stateFile, monitorOpts, cancelReques
     isRestartRequired = false;
     try
         [response, consumer] = sendResumableRequest(uri, partialFile, stateFile, ...
-            offset, entityTag, totalBytes, monitorOpts, cancelRequestedFcn);
+            offset, entityTag, totalBytes, requestOpts);
     catch exception
         if exception.identifier ~= "webprogress:download:RestartRequired"
             rethrow(exception)
@@ -327,7 +350,7 @@ function receiveResumable(uri, partialFile, stateFile, monitorOpts, cancelReques
         deleteIfFile(partialFile)
         deleteIfFile(stateFile)
         [response, consumer] = sendResumableRequest(uri, partialFile, stateFile, ...
-            0, "", nan, monitorOpts, cancelRequestedFcn);
+            0, "", nan, requestOpts);
     end
 
     if ~any(double(response.StatusCode) == [200, 206])
@@ -338,7 +361,7 @@ function receiveResumable(uri, partialFile, stateFile, monitorOpts, cancelReques
 end
 
 function [response, consumer] = sendResumableRequest(uri, partialFile, stateFile, ...
-        offset, entityTag, totalBytes, monitorOpts, cancelRequestedFcn)
+        offset, entityTag, totalBytes, requestOpts)
     %sendResumableRequest - Send a GET request for the bytes from offset onward
     %   An offset of 0 asks for the whole file. Accept-Encoding asks for
     %   the file without a content coding, because a byte range counts
@@ -348,7 +371,8 @@ function [response, consumer] = sendResumableRequest(uri, partialFile, stateFile
     %   entity tag no longer matches (section 13.1.5).
     consumer = webprogress.internal.ResumableFileConsumer(partialFile, stateFile, ...
         offset, entityTag, totalBytes);
-    webOpts = createHttpOptions(@(varargin) createResumeMonitor(consumer, monitorOpts));
+    webOpts = createHttpOptions(@(varargin) createResumeMonitor(consumer, ...
+        requestOpts.MonitorOpts), requestOpts.DataTimeout);
 
     fields = matlab.net.http.HeaderField("Accept-Encoding", "identity");
     if offset > 0
@@ -359,7 +383,7 @@ function [response, consumer] = sendResumableRequest(uri, partialFile, stateFile
     method = matlab.net.http.RequestMethod.GET;
     req = matlab.net.http.RequestMessage(method, fields, []);
 
-    response = sendRequest(req, uri, webOpts, consumer, cancelRequestedFcn);
+    response = sendRequest(req, uri, webOpts, consumer, requestOpts);
 end
 
 function monitor = createResumeMonitor(consumer, monitorOpts)

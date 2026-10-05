@@ -214,6 +214,25 @@ classdef DownloadResumeTest < matlab.unittest.TestCase
             testCase.verifyEqual(fileread(testCase.Target), content)
         end
 
+        function testStalledDownloadKeepsPartialFiles(testCase)
+            % The server pauses after the first byte for longer than the
+            % DataTimeout of the call, and a second call completes the
+            % file.
+            content = repmat('0123456789', 1, 5);
+            url = testCase.fileUrl('content', content);
+
+            testCase.verifyError(@() captureOutput(@() webprogress.download(testCase.Target, ...
+                url + "&delay=3", 'DisplayMode', 'Command Window', 'Resume', true, ...
+                'DataTimeout', 0.5)), 'webprogress:download:TransferStalled')
+
+            testCase.verifyEqual(listFiles(testCase.Folder), ...
+                ["data.txt.part", "data.txt.part.json"])
+
+            downloadQuietly(testCase.Target, url);
+
+            testCase.verifyEqual(fileread(testCase.Target), content)
+        end
+
         function testUnknownCompleteLengthIsChecked(testCase)
             % Content-Range gives the complete length as "*", so the end
             % of the range is what the received size is checked against.
