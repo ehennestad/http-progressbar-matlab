@@ -40,8 +40,6 @@ classdef (Sealed) MultipartProgressMonitor < webprogress.FileTransferProgressMon
 %
 %   See also webprogress.upload, webprogress.FileTransferProgressMonitor
 
-%   Written by Eivind Hennestad
-
     properties (Dependent)
         CompletedBytes  % Bytes of the parts that were sent successfully
         IsCancelled     % Whether the user cancelled the transfer

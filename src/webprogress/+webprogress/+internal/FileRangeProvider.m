@@ -12,8 +12,6 @@ classdef (Sealed) FileRangeProvider < matlab.net.http.io.ContentProvider
 %
 %   This class is used by webprogress.upload.
 
-%   Written by Eivind Hennestad
-
     properties (SetAccess = immutable)
         FilePath string        % File to read the range from
         Offset   (1,1) double  % Number of bytes before the range
