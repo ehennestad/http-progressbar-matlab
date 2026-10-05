@@ -20,8 +20,10 @@ classdef UploadRangeTest < matlab.unittest.TestCase
             testsFolder = fileparts(mfilename('fullpath'));
             sourceFolder = fullfile(fileparts(testsFolder), 'src', 'webprogress');
             testCase.applyFixture(matlab.unittest.fixtures.PathFixture(sourceFolder));
-            testCase.applyFixture(matlab.unittest.fixtures.PathFixture( ...
-                fullfile(testsFolder, 'fixtures')));
+            for folderName = ["fixtures", "helpers"]
+                testCase.applyFixture(matlab.unittest.fixtures.PathFixture( ...
+                    fullfile(testsFolder, folderName)));
+            end
         end
 
         function startLocalServer(testCase)
@@ -210,12 +212,4 @@ classdef UploadRangeTest < matlab.unittest.TestCase
             testCase.verifyEqual(echo.tail(:), double(expected(max(end-15, 1):end)))
         end
     end
-end
-
-function [output, varargout] = captureOutput(fcn) %#ok<INUSD> fcn is called inside evalc
-    %captureOutput - Call a function and return its Command Window output
-    %   [OUTPUT, OUT1, ..., OUTN] = captureOutput(FCN) also returns the
-    %   first N outputs of FCN.
-    varargout = cell(1, nargout - 1);
-    output = evalc("[varargout{1:nargout-1}] = fcn();");
 end

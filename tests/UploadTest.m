@@ -24,8 +24,10 @@ classdef UploadTest < matlab.unittest.TestCase
             testsFolder = fileparts(mfilename('fullpath'));
             sourceFolder = fullfile(fileparts(testsFolder), 'src', 'webprogress');
             testCase.applyFixture(matlab.unittest.fixtures.PathFixture(sourceFolder));
-            testCase.applyFixture(matlab.unittest.fixtures.PathFixture( ...
-                fullfile(testsFolder, 'fixtures')));
+            for folderName = ["fixtures", "helpers"]
+                testCase.applyFixture(matlab.unittest.fixtures.PathFixture( ...
+                    fullfile(testsFolder, folderName)));
+            end
         end
 
         function startLocalServer(testCase)
@@ -159,9 +161,4 @@ function uploadWithoutOutputs(filePath, url) %#ok<INUSD> used inside evalc
     %   caller.
     evalc(['webprogress.upload(filePath, url, ', ...
         '''DisplayMode'', ''Command Window'');']);
-end
-
-function output = captureOutput(fcn) %#ok<INUSD> fcn is called inside evalc
-    %captureOutput - Call a function and return its Command Window output
-    output = evalc('fcn()');
 end

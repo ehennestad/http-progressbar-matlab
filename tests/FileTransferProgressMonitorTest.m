@@ -43,8 +43,10 @@ classdef FileTransferProgressMonitorTest < matlab.unittest.TestCase
             testsFolder = fileparts(mfilename('fullpath'));
             sourceFolder = fullfile(fileparts(testsFolder), 'src', 'webprogress');
             testCase.applyFixture(matlab.unittest.fixtures.PathFixture(sourceFolder));
-            testCase.applyFixture(matlab.unittest.fixtures.PathFixture( ...
-                fullfile(testsFolder, 'fixtures')));
+            for folderName = ["fixtures", "helpers"]
+                testCase.applyFixture(matlab.unittest.fixtures.PathFixture( ...
+                    fullfile(testsFolder, folderName)));
+            end
         end
     end
 
@@ -587,9 +589,4 @@ function setValues(monitor, values)
     for value = values
         monitor.Value = uint64(value);
     end
-end
-
-function output = captureOutput(fcn) %#ok<INUSD> fcn is called inside evalc
-    %captureOutput - Call a function and return its Command Window output
-    output = evalc('fcn()');
 end

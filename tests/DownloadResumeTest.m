@@ -31,8 +31,10 @@ classdef DownloadResumeTest < matlab.unittest.TestCase
             testsFolder = fileparts(mfilename('fullpath'));
             sourceFolder = fullfile(fileparts(testsFolder), 'src', 'webprogress');
             testCase.applyFixture(matlab.unittest.fixtures.PathFixture(sourceFolder));
-            testCase.applyFixture(matlab.unittest.fixtures.PathFixture( ...
-                fullfile(testsFolder, 'fixtures')));
+            for folderName = ["fixtures", "helpers"]
+                testCase.applyFixture(matlab.unittest.fixtures.PathFixture( ...
+                    fullfile(testsFolder, folderName)));
+            end
         end
 
         function startLocalServer(testCase)
@@ -438,7 +440,8 @@ classdef DownloadResumeTest < matlab.unittest.TestCase
 
             % The HTTP stack calls the monitor only once the transfer has
             % lasted a moment, which a local transfer of 1 MB may not.
-            output = downloadWithOutput(testCase.Target, url + "&delay=0.5");
+            output = captureOutput(@() webprogress.download(testCase.Target, ...
+                url + "&delay=0.5", 'DisplayMode', 'Command Window', 'Resume', true));
 
             testCase.verifySubstring(output, '3 MB/3 MB (100%)')
             testCase.verifyEqual(readBytes(testCase.Target), ...
@@ -495,18 +498,6 @@ function savedPath = downloadQuietly(target, url) %#ok<INUSD> used inside evalc
     savedPath = '';
     evalc(['savedPath = webprogress.download(target, url, ', ...
         '''DisplayMode'', ''Command Window'', ''Resume'', true);']);
-end
-
-function output = downloadWithOutput(target, url) %#ok<INUSD> used inside evalc
-    %downloadWithOutput - Download with Resume=true and return the printed progress
-    output = evalc(['webprogress.download(target, url, ', ...
-        '''DisplayMode'', ''Command Window'', ''Resume'', true);']);
-end
-
-function names = listFiles(folder)
-    %listFiles - Return the names of the files in a folder in sorted order
-    listing = dir(folder);
-    names = sort(string({listing(~[listing.isdir]).name}));
 end
 
 function writeText(filePath, text)

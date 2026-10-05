@@ -14,8 +14,10 @@ classdef DownloadTargetTest < matlab.unittest.TestCase
             testsFolder = fileparts(mfilename('fullpath'));
             sourceFolder = fullfile(fileparts(testsFolder), 'src', 'webprogress');
             testCase.applyFixture(matlab.unittest.fixtures.PathFixture(sourceFolder));
-            testCase.applyFixture(matlab.unittest.fixtures.PathFixture( ...
-                fullfile(testsFolder, 'fixtures')));
+            for folderName = ["fixtures", "helpers"]
+                testCase.applyFixture(matlab.unittest.fixtures.PathFixture( ...
+                    fullfile(testsFolder, folderName)));
+            end
         end
 
         function startLocalServer(testCase)
@@ -220,12 +222,6 @@ function savedPath = downloadQuietly(target, url) %#ok<INUSD> used inside evalc
     savedPath = '';
     evalc(['savedPath = webprogress.download(target, url, ', ...
         '''DisplayMode'', ''Command Window'');']);
-end
-
-function names = listFiles(folder)
-    %listFiles - Return the names of the files in a folder
-    listing = dir(folder);
-    names = string({listing(~[listing.isdir]).name});
 end
 
 function writeText(filePath, text)
