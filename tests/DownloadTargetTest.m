@@ -13,7 +13,7 @@ classdef DownloadTargetTest < matlab.unittest.TestCase
         % Content-Disposition names of files that MATLAB runs. Windows
         % removes the trailing period and space, and %20 is a space in
         % the query of the served URL.
-        RunnableName = struct( ...
+        runnableName = struct( ...
             'MFile', 'disp.m', ...
             'LiveScript', 'startup.mlx', ...
             'App', 'tool.mlapp', ...
@@ -123,8 +123,8 @@ classdef DownloadTargetTest < matlab.unittest.TestCase
             testCase.verifyEmpty(listFiles(fullfile(testCase.Folder, 'data')))
         end
 
-        function testContentDispositionRunnableNameErrors(testCase, RunnableName)
-            url = testCase.fileUrl('download', 'filename', RunnableName);
+        function testContentDispositionRunnableNameErrors(testCase, runnableName)
+            url = testCase.fileUrl('download', 'filename', runnableName);
 
             testCase.verifyError(@() downloadQuietly(testCase.Folder, url), ...
                 'webprogress:download:RunnableFilename')
