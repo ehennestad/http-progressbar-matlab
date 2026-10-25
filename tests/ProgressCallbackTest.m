@@ -132,6 +132,30 @@ classdef ProgressCallbackTest < matlab.unittest.TestCase
             testCase.verifyEqual(listFiles(testCase.Folder), "upload.bin")
         end
 
+        function testTemporarySuffixNamesTheReceivedFile(testCase)
+            % The file is received in a temporary file next to the target
+            % whose name ends with the suffix, so that a tool that scans
+            % the folder recognises what a process killed during the
+            % download leaves behind. The server pauses after the first
+            % byte, so the folder is listed while the transfer runs.
+            target = fullfile(testCase.Folder, 'data.bin');
+            url = testCase.sizedFileUrl("delay", 1);
+            seen = strings(1, 0);
+            function recordFiles(~)
+                seen = union(seen, listFiles(testCase.Folder));
+            end
+
+            webprogress.download(target, url, 'DisplayMode', 'None', ...
+                'UpdateInterval', 0.001, 'ProgressFcn', @recordFiles, ...
+                'TemporarySuffix', '.sync-part');
+
+            testCase.verifyTrue(any(endsWith(seen, ".sync-part")), ...
+                'The download is received in a file that ends with the suffix.')
+            testCase.verifyFalse(any(endsWith(seen, ".part")), ...
+                'No file of the default suffix appears.')
+            testCase.verifyEqual(listFiles(testCase.Folder), ["data.bin", "upload.bin"])
+        end
+
         function testResumableDownloadCancelledKeepsPartialFile(testCase)
             % The state file is written when the headers arrive, so a
             % cancelled download can be continued with Resume=true.
