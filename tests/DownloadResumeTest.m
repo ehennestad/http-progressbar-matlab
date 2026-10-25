@@ -461,6 +461,26 @@ classdef DownloadResumeTest < matlab.unittest.TestCase
             testCase.verifyEqual(fileread(testCase.Target), content)
         end
 
+        function testTemporarySuffixNamesThePartialFiles(testCase)
+            % A tool that scans the target folder can be told the suffix
+            % the part and its state are kept under, and a later call
+            % with the same suffix continues from them.
+            content = repmat('0123456789', 1, 5);
+            url = testCase.fileUrl('content', content);
+            testCase.assertError(@() downloadQuietly(testCase.Target, ...
+                url + "&truncate=" + testCase.FirstPartBytes, 'TemporarySuffix', '.sync-part'), ...
+                'webprogress:download:IncompleteTransfer')
+            testCase.verifyEqual(listFiles(testCase.Folder), ...
+                ["data.txt.sync-part", "data.txt.sync-part.json"])
+            testCase.verifyEqual(fileread(testCase.Target + ".sync-part"), ...
+                content(1:testCase.FirstPartBytes))
+
+            downloadQuietly(testCase.Target, url, 'TemporarySuffix', '.sync-part');
+
+            testCase.verifyEqual(fileread(testCase.Target), content)
+            testCase.verifyEqual(listFiles(testCase.Folder), "data.txt")
+        end
+
         function testFolderTargetErrors(testCase)
             testCase.verifyError(@() downloadQuietly(testCase.Folder, ...
                 testCase.fileUrl('content', 'data')), ...
@@ -530,11 +550,12 @@ classdef DownloadResumeTest < matlab.unittest.TestCase
     end
 end
 
-function savedPath = downloadQuietly(target, url) %#ok<INUSD> used inside evalc
+function savedPath = downloadQuietly(target, url, varargin) %#ok<INUSD> used inside evalc
     %downloadQuietly - Download with Resume=true without printing progress
+    %   Further arguments are passed on as name-value arguments.
     savedPath = '';
     evalc(['savedPath = webprogress.download(target, url, ', ...
-        '''DisplayMode'', ''Command Window'', ''Resume'', true);']);
+        '''DisplayMode'', ''Command Window'', ''Resume'', true, varargin{:});']);
 end
 
 function writeText(filePath, text)
